@@ -8,7 +8,7 @@
 
 // 沙盒路径
 #define kAWECAAudioDir @"AWECommentAudio"
-#define kAWECAImportDir @"AWECommentAudio/Imported"
+#define kAWECAImportDir @"AWECommentAudio/导入音频"
 // 持久化 key
 #define kAWECAReplacementEnabled @"AWECAReplacementEnabled"
 #define kAWECAReplacementAudioPath @"AWECAReplacementAudioPath"
