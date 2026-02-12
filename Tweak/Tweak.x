@@ -264,7 +264,7 @@ static void hook_audioIconViewDidLoad(id self, SEL _cmd) {
     [elementView addGestureRecognizer:lp];
 
     UIView *redDot = [[UIView alloc] initWithFrame:CGRectMake(elementView.bounds.size.width - 8, 2, 6, 6)];
-    redDot.backgroundColor = [UIColor colorWithRed:0.3 green:0.85 blue:0.4 alpha:1.0];
+    redDot.backgroundColor = [UIColor redColor];
     redDot.layer.cornerRadius = 3;
     redDot.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
     redDot.hidden = ![AWECAAudioReplacer shared].enabled;
