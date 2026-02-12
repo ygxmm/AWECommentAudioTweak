@@ -20,13 +20,6 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
-
-    // 点空白收键盘
-    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
-        initWithTarget:self action:@selector(dismissKeyboard)];
-    tap.cancelsTouchesInView = NO;
-    [self.view addGestureRecognizer:tap];
-
     [self setupUI];
     [self updateTitleView];
 }
@@ -180,9 +173,18 @@
         self.isSynthesizing = NO;
         if (success) {
             [AWECAUtils showToast:error ?: @"合成成功"];
-            // 先收键盘再关页面，不然键盘会残留
+            // 先收自己的键盘
             [self.view endEditing:YES];
-            [self dismissViewControllerAnimated:YES completion:nil];
+            [self dismissViewControllerAnimated:YES completion:^{
+                // dismiss 后遍历所有 window 收键盘，防止抖音输入框重新获取焦点
+                for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                    if ([scene isKindOfClass:[UIWindowScene class]]) {
+                        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+                            [w endEditing:YES];
+                        }
+                    }
+                }
+            }];
         } else {
             [AWECAUtils showToast:error ?: @"合成失败"];
         }
