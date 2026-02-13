@@ -73,17 +73,37 @@ static BOOL loadArchiveLibrary(void) {
     return [[self documentsPath] stringByAppendingPathComponent:kAWECAImportDir];
 }
 
++ (NSString *)ttsPath {
+    return [[self documentsPath] stringByAppendingPathComponent:@"AWECommentAudio/Ai合成"];
+}
+
++ (NSString *)ttsVolcanoPath {
+    return [[self ttsPath] stringByAppendingPathComponent:@"火山引擎"];
+}
+
++ (NSString *)ttsQwenPath {
+    return [[self ttsPath] stringByAppendingPathComponent:@"千问引擎"];
+}
+
 + (void)ensureDirectoriesExist {
     // 没目录就建，有就算了
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *audioDir = [self audioSavePath];
     NSString *importDir = [self importPath];
+    NSString *volcanoDir = [self ttsVolcanoPath];
+    NSString *qwenDir = [self ttsQwenPath];
 
     if (![fm fileExistsAtPath:audioDir]) {
         [fm createDirectoryAtPath:audioDir withIntermediateDirectories:YES attributes:nil error:nil];
     }
     if (![fm fileExistsAtPath:importDir]) {
         [fm createDirectoryAtPath:importDir withIntermediateDirectories:YES attributes:nil error:nil];
+    }
+    if (![fm fileExistsAtPath:volcanoDir]) {
+        [fm createDirectoryAtPath:volcanoDir withIntermediateDirectories:YES attributes:nil error:nil];
+    }
+    if (![fm fileExistsAtPath:qwenDir]) {
+        [fm createDirectoryAtPath:qwenDir withIntermediateDirectories:YES attributes:nil error:nil];
     }
 }
 
@@ -198,6 +218,18 @@ static BOOL loadArchiveLibrary(void) {
     NSTimeInterval ts = [[NSDate date] timeIntervalSince1970];
     return [NSString stringWithFormat:@"评论_%@_%llds_%.0f.m4a",
             commentID ?: @"unknown", duration, ts];
+}
+
++ (NSString *)sanitizeFilename:(NSString *)name maxLength:(NSUInteger)maxLen {
+    if (!name || name.length == 0) return @"未命名";
+    // 干掉文件名非法字符
+    NSCharacterSet *illegal = [NSCharacterSet characterSetWithCharactersInString:@"/\\:*?\"<>|"];
+    NSString *clean = [[name componentsSeparatedByCharactersInSet:illegal] componentsJoinedByString:@""];
+    // 去首尾空格
+    clean = [clean stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (clean.length == 0) return @"未命名";
+    if (clean.length > maxLen) clean = [clean substringToIndex:maxLen];
+    return clean;
 }
 
 #pragma mark - 顶层VC

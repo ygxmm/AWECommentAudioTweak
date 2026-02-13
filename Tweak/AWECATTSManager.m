@@ -121,13 +121,14 @@
             return;
         }
 
-        [self parseResponse:data completion:completion];
+        [self parseResponse:data text:text completion:completion];
     }] resume];
 }
 
 #pragma mark - 解析响应
 
 - (void)parseResponse:(NSData *)data
+                 text:(NSString *)text
            completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion {
     NSError *jsonErr = nil;
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonErr];
@@ -165,7 +166,7 @@
         return;
     }
 
-    // 写入文件
+    // 写入临时文件
     [AWECAUtils ensureDirectoriesExist];
     NSString *savePath = [[AWECAUtils audioSavePath] stringByAppendingPathComponent:@"tts_result.mp3"];
     BOOL writeOK = [audioData writeToFile:savePath atomically:YES];
@@ -187,18 +188,19 @@
         replacer.ttsAudioPath = savePath;
         [replacer saveState];
 
+        NSString *vName = (self.voiceName.length > 0) ? self.voiceName : @"未知音色";
+
         // 检测是否有普通音频冲突
         BOOL hasNormalAudio = replacer.enabled && replacer.replacementAudioPath.length > 0 && !replacer.isUsingTTS;
         if (hasNormalAudio) {
-            // 有冲突，弹选择器
-            [self showTTSConflictAlertWithPath:savePath completion:completion];
+            [self showTTSConflictAlertWithPath:savePath text:text voiceName:vName provider:AWECATTSProviderVolcano completion:completion];
         } else {
-            // 无冲突，直接设为替换
-            [replacer setReplacementFromPath:savePath completion:^(BOOL ok) {
+            __weak AWECAAudioReplacer *weakReplacer = replacer;
+            [replacer setReplacementFromTTSPath:savePath text:text voiceName:vName provider:AWECATTSProviderVolcano completion:^(BOOL ok) {
                 if (completion) {
                     if (ok) {
-                        double dur = [AWECAUtils audioDurationAtPath:savePath];
-                        completion(YES, savePath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
+                        double dur = [AWECAUtils audioDurationAtPath:weakReplacer.replacementAudioPath];
+                        completion(YES, weakReplacer.replacementAudioPath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
                     } else {
                         completion(NO, savePath, @"合成成功但设置替换失败");
                     }
@@ -259,11 +261,12 @@
             });
             return;
         }
-        [self parseQwenResponse:data completion:completion];
+        [self parseQwenResponse:data text:text completion:completion];
     }] resume];
 }
 
 - (void)parseQwenResponse:(NSData *)data
+                     text:(NSString *)text
                completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion {
     NSError *jsonErr = nil;
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonErr];
@@ -310,7 +313,7 @@
             return;
         }
 
-        // 保存到本地
+        // 保存临时文件
         [AWECAUtils ensureDirectoriesExist];
         NSString *savePath = [[AWECAUtils audioSavePath] stringByAppendingPathComponent:@"qwen_tts_result.wav"];
         BOOL writeOK = [audioData writeToFile:savePath atomically:YES];
@@ -331,16 +334,19 @@
             replacer.ttsAudioPath = savePath;
             [replacer saveState];
 
+            NSString *vName = (self.voiceName.length > 0) ? self.voiceName : @"未知音色";
+
             // 检测是否有普通音频冲突
             BOOL hasNormalAudio = replacer.enabled && replacer.replacementAudioPath.length > 0 && !replacer.isUsingTTS;
             if (hasNormalAudio) {
-                [self showTTSConflictAlertWithPath:savePath completion:completion];
+                [self showTTSConflictAlertWithPath:savePath text:text voiceName:vName provider:AWECATTSProviderQwen completion:completion];
             } else {
-                [replacer setReplacementFromPath:savePath completion:^(BOOL ok) {
+                __weak AWECAAudioReplacer *weakReplacer = replacer;
+                [replacer setReplacementFromTTSPath:savePath text:text voiceName:vName provider:AWECATTSProviderQwen completion:^(BOOL ok) {
                     if (completion) {
                         if (ok) {
-                            double dur = [AWECAUtils audioDurationAtPath:savePath];
-                            completion(YES, savePath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
+                            double dur = [AWECAUtils audioDurationAtPath:weakReplacer.replacementAudioPath];
+                            completion(YES, weakReplacer.replacementAudioPath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
                         } else {
                             completion(NO, savePath, @"合成成功但设置替换失败");
                         }
@@ -354,11 +360,14 @@
 #pragma mark - 冲突选择器
 
 - (void)showTTSConflictAlertWithPath:(NSString *)ttsPath
+                                text:(NSString *)text
+                           voiceName:(NSString *)voiceName
+                            provider:(AWECATTSProvider)provider
                           completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion {
     UIViewController *topVC = [AWECAUtils topViewController];
     if (!topVC) {
         // 没VC就直接覆盖，别卡死
-        [[AWECAAudioReplacer shared] setReplacementFromPath:ttsPath completion:^(BOOL ok) {
+        [[AWECAAudioReplacer shared] setReplacementFromTTSPath:ttsPath text:text voiceName:voiceName provider:provider completion:^(BOOL ok) {
             if (completion) completion(ok, ttsPath, ok ? @"语音合成成功" : @"设置替换失败");
         }];
         return;
@@ -369,11 +378,13 @@
                                                            preferredStyle:UIAlertControllerStyleActionSheet];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"使用Ai" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [[AWECAAudioReplacer shared] setReplacementFromPath:ttsPath completion:^(BOOL ok) {
+        AWECAAudioReplacer *replacer = [AWECAAudioReplacer shared];
+        __weak AWECAAudioReplacer *weakReplacer = replacer;
+        [replacer setReplacementFromTTSPath:ttsPath text:text voiceName:voiceName provider:provider completion:^(BOOL ok) {
             if (completion) {
                 if (ok) {
-                    double dur = [AWECAUtils audioDurationAtPath:ttsPath];
-                    completion(YES, ttsPath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
+                    double dur = [AWECAUtils audioDurationAtPath:weakReplacer.replacementAudioPath];
+                    completion(YES, weakReplacer.replacementAudioPath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
                 } else {
                     completion(NO, ttsPath, @"合成成功但设置替换失败");
                 }

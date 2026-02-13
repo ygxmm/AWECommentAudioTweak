@@ -15,10 +15,13 @@
 
 @interface AWECAUtils : NSObject
 
-// 路径三件套
+// 路径四件套 + TTS子目录
 + (NSString *)documentsPath;
 + (NSString *)audioSavePath;
 + (NSString *)importPath;
++ (NSString *)ttsPath;
++ (NSString *)ttsVolcanoPath;
++ (NSString *)ttsQwenPath;
 // 没目录就建，佛系操作
 + (void)ensureDirectoriesExist;
 
@@ -35,6 +38,9 @@
 
 // 生成文件名
 + (NSString *)generateFilenameForCommentID:(NSString *)commentID duration:(long long)duration;
+
+// 清理文件名非法字符
++ (NSString *)sanitizeFilename:(NSString *)name maxLength:(NSUInteger)maxLen;
 
 // 拿最顶层 VC，弹窗得找对人
 + (UIViewController *)topViewController;

@@ -62,6 +62,68 @@
     }
 }
 
+#pragma mark - TTS专用替换，转码+命名+清理
+
+- (void)setReplacementFromTTSPath:(NSString *)path
+                             text:(NSString *)text
+                        voiceName:(NSString *)voiceName
+                         provider:(NSInteger)provider
+                       completion:(void(^)(BOOL success))completion {
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        if (completion) completion(NO);
+        return;
+    }
+
+    [AWECAUtils ensureDirectoriesExist];
+
+    // 根据后端选目录
+    NSString *destDir = (provider == 1) ? [AWECAUtils ttsQwenPath] : [AWECAUtils ttsVolcanoPath];
+
+    // 拼文件名: 文字-音色.m4a
+    NSString *cleanText = [AWECAUtils sanitizeFilename:text maxLength:20];
+    NSString *cleanVoice = [AWECAUtils sanitizeFilename:voiceName maxLength:20];
+    NSString *fileName = [NSString stringWithFormat:@"%@-%@.m4a", cleanText, cleanVoice];
+    NSString *outputPath = [destDir stringByAppendingPathComponent:fileName];
+
+    // 重名加时间戳
+    if ([[NSFileManager defaultManager] fileExistsAtPath:outputPath]) {
+        fileName = [NSString stringWithFormat:@"%@-%@_%.0f.m4a", cleanText, cleanVoice, [[NSDate date] timeIntervalSince1970]];
+        outputPath = [destDir stringByAppendingPathComponent:fileName];
+    }
+
+    NSString *ext = path.pathExtension.lowercaseString;
+    NSString *originalPath = [path copy];
+
+    if ([ext isEqualToString:@"m4a"] || [ext isEqualToString:@"aac"]) {
+        // 本来就是m4a，直接copy过去
+        [[NSFileManager defaultManager] removeItemAtPath:outputPath error:nil];
+        NSError *err = nil;
+        BOOL ok = [[NSFileManager defaultManager] copyItemAtPath:path toPath:outputPath error:&err];
+        if (ok) {
+            // 删原始文件
+            [[NSFileManager defaultManager] removeItemAtPath:originalPath error:nil];
+            self.replacementAudioPath = outputPath;
+            self.enabled = YES;
+            [self saveState];
+        }
+        if (completion) completion(ok);
+    } else {
+        // 转码走起
+        [AWECAUtils convertAudioAtPath:path toOutputPath:outputPath completion:^(BOOL success, NSError *error) {
+            if (success) {
+                // 转码成功，删原始mp3/wav
+                [[NSFileManager defaultManager] removeItemAtPath:originalPath error:nil];
+                self.replacementAudioPath = outputPath;
+                self.enabled = YES;
+                [self saveState];
+            } else {
+                [AWECAUtils showToast:@"音频转码失败"];
+            }
+            if (completion) completion(success);
+        }];
+    }
+}
+
 #pragma mark - 清除
 
 - (void)clearReplacement {

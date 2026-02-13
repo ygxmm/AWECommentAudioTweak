@@ -5,6 +5,7 @@
 #import "AWECADownloadManager.h"
 #import "AWECAAudioReplacer.h"
 #import "AWECATTSConfigController.h"
+#import "AWECATTSManager.h"
 #import "AWECAUtils.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
@@ -537,7 +538,11 @@ static NSString *const kTelegramIconB64 = @"iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAMA
 
 @end
 
-// === AWECAPluginDirBrowserController ===
+// === AWECAPluginDirBrowserController - 文件管理全家桶 ===
+
+@interface AWECAPluginDirBrowserController ()
+@property (nonatomic, copy) NSString *playingPath;
+@end
 
 @implementation AWECAPluginDirBrowserController
 
@@ -545,7 +550,72 @@ static NSString *const kTelegramIconB64 = @"iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAMA
     [super viewDidLoad];
     self.title = self.directoryPath.lastPathComponent;
     [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"dc"];
+    self.tableView.allowsMultipleSelectionDuringEditing = YES;
+
+    // 右上角管理按钮
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"管理"
+        style:UIBarButtonItemStylePlain target:self action:@selector(toggleEditMode)];
+
     [self loadItems];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    // 离开页面停止播放
+    [[AWECATTSManager shared] stopPlayback];
+    self.playingPath = nil;
+}
+
+- (void)toggleEditMode {
+    BOOL entering = !self.tableView.isEditing;
+    [self.tableView setEditing:entering animated:YES];
+    self.navigationItem.rightBarButtonItem.title = entering ? @"完成" : @"管理";
+
+    if (entering) {
+        // 底部工具栏
+        UIBarButtonItem *flex = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+        UIBarButtonItem *selectAll = [[UIBarButtonItem alloc] initWithTitle:@"全选" style:UIBarButtonItemStylePlain target:self action:@selector(selectAllItems)];
+        UIBarButtonItem *deleteBtn = [[UIBarButtonItem alloc] initWithTitle:@"删除选中" style:UIBarButtonItemStylePlain target:self action:@selector(deleteSelectedItems)];
+        deleteBtn.tintColor = [UIColor systemRedColor];
+        self.toolbarItems = @[selectAll, flex, deleteBtn];
+        [self.navigationController setToolbarHidden:NO animated:YES];
+    } else {
+        [self.navigationController setToolbarHidden:YES animated:YES];
+    }
+}
+
+- (void)selectAllItems {
+    for (NSInteger i = 0; i < (NSInteger)self.items.count; i++) {
+        [self.tableView selectRowAtIndexPath:[NSIndexPath indexPathForRow:i inSection:0] animated:NO scrollPosition:UITableViewScrollPositionNone];
+    }
+}
+
+- (void)deleteSelectedItems {
+    NSArray *selected = [self.tableView indexPathsForSelectedRows];
+    if (!selected || selected.count == 0) {
+        [AWECAUtils showToast:@"请先选择要删除的文件"];
+        return;
+    }
+
+    UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"确认删除"
+        message:[NSString stringWithFormat:@"将删除 %lu 个项目", (unsigned long)selected.count]
+        preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+        // 倒序删，索引不乱
+        NSArray *sorted = [selected sortedArrayUsingComparator:^NSComparisonResult(NSIndexPath *a, NSIndexPath *b) {
+            return [@(b.row) compare:@(a.row)];
+        }];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (NSIndexPath *ip in sorted) {
+            NSDictionary *item = self.items[ip.row];
+            [fm removeItemAtPath:item[@"path"] error:nil];
+            [self.items removeObjectAtIndex:ip.row];
+        }
+        [self.tableView reloadData];
+        [AWECAUtils showToast:[NSString stringWithFormat:@"已删除 %lu 项", (unsigned long)sorted.count]];
+    }]];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:confirm animated:YES completion:nil];
 }
 
 - (void)loadItems {
@@ -553,12 +623,14 @@ static NSString *const kTelegramIconB64 = @"iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAMA
     NSFileManager *fm = [NSFileManager defaultManager];
     NSArray *c = [fm contentsOfDirectoryAtPath:self.directoryPath error:nil];
     NSMutableArray *dirs = [NSMutableArray array], *files = [NSMutableArray array];
+    // 支持的音频格式
+    NSSet *audioExts = [NSSet setWithArray:@[@"m4a", @"aac", @"mp3", @"wav", @"mp4"]];
     for (NSString *n in c) {
         if ([n hasPrefix:@"."]) continue;
         NSString *fp = [self.directoryPath stringByAppendingPathComponent:n];
         BOOL d = NO; [fm fileExistsAtPath:fp isDirectory:&d];
         if (d) [dirs addObject:@{@"name":n, @"isDir":@YES, @"path":fp}];
-        else if ([n.pathExtension.lowercaseString isEqualToString:@"m4a"]) [files addObject:@{@"name":n, @"isDir":@NO, @"path":fp}];
+        else if ([audioExts containsObject:n.pathExtension.lowercaseString]) [files addObject:@{@"name":n, @"isDir":@NO, @"path":fp}];
     }
     [dirs sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [a[@"name"] localizedCaseInsensitiveCompare:b[@"name"]]; }];
     [files sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
@@ -574,6 +646,8 @@ static NSString *const kTelegramIconB64 = @"iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAMA
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"dc" forIndexPath:ip];
     NSDictionary *item = self.items[ip.row];
     c.textLabel.font = kCellFont;
+    c.accessoryView = nil;
+
     if ([item[@"isDir"] boolValue]) {
         c.textLabel.text = item[@"name"];
         c.imageView.image = [UIImage systemImageNamed:@"folder"];
@@ -585,11 +659,46 @@ static NSString *const kTelegramIconB64 = @"iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAMA
         c.imageView.image = [UIImage systemImageNamed:@"music.note"];
         c.accessoryType = UITableViewCellAccessoryNone;
         c.textLabel.textColor = nil;
+
+        // 播放按钮，编辑模式下不显示
+        if (!tv.isEditing) {
+            UIButton *playBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+            UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightRegular];
+            BOOL isPlaying = [self.playingPath isEqualToString:item[@"path"]] && [[AWECATTSManager shared] isPlaying];
+            NSString *iconName = isPlaying ? @"stop.circle" : @"play.circle";
+            [playBtn setImage:[UIImage systemImageNamed:iconName withConfiguration:cfg] forState:UIControlStateNormal];
+            playBtn.frame = CGRectMake(0, 0, 36, 36);
+            playBtn.tag = ip.row;
+            [playBtn addTarget:self action:@selector(playButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+            c.accessoryView = playBtn;
+        }
     }
     return c;
 }
 
+- (void)playButtonTapped:(UIButton *)btn {
+    NSInteger row = btn.tag;
+    if (row >= (NSInteger)self.items.count) return;
+    NSDictionary *item = self.items[row];
+    NSString *path = item[@"path"];
+
+    AWECATTSManager *mgr = [AWECATTSManager shared];
+    if ([self.playingPath isEqualToString:path] && [mgr isPlaying]) {
+        // 正在播这个，停掉
+        [mgr stopPlayback];
+        self.playingPath = nil;
+    } else {
+        // 播新的
+        [mgr stopPlayback];
+        self.playingPath = path;
+        [mgr playAudioAtPath:path];
+    }
+    [self.tableView reloadData];
+}
+
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    // 编辑模式下不触发选择音频
+    if (tv.isEditing) return;
     [tv deselectRowAtIndexPath:ip animated:YES];
     NSDictionary *item = self.items[ip.row];
     if ([item[@"isDir"] boolValue]) {
@@ -602,6 +711,70 @@ static NSString *const kTelegramIconB64 = @"iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAMA
         }];
         [self dismissViewControllerAnimated:YES completion:nil];
     }
+}
+
+#pragma mark - 左滑操作: 删除 + 重命名
+
+- (BOOL)tableView:(UITableView *)tv canEditRowAtIndexPath:(NSIndexPath *)ip { return YES; }
+
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tv trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    // 编辑模式下不显示左滑
+    if (tv.isEditing) return nil;
+
+    NSDictionary *item = self.items[ip.row];
+
+    // 删除
+    UIContextualAction *deleteAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive
+        title:@"删除" handler:^(UIContextualAction *action, UIView *sv, void (^handler)(BOOL)) {
+        UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"确认删除"
+            message:item[@"name"] preferredStyle:UIAlertControllerStyleAlert];
+        [confirm addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+            [[NSFileManager defaultManager] removeItemAtPath:item[@"path"] error:nil];
+            [self.items removeObjectAtIndex:ip.row];
+            [tv deleteRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationAutomatic];
+            handler(YES);
+        }]];
+        [confirm addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) { handler(NO); }]];
+        [self presentViewController:confirm animated:YES completion:nil];
+    }];
+
+    // 重命名
+    UIContextualAction *renameAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"重命名" handler:^(UIContextualAction *action, UIView *sv, void (^handler)(BOOL)) {
+        NSString *oldName = item[@"name"];
+        NSString *ext = oldName.pathExtension;
+        NSString *nameOnly = [oldName stringByDeletingPathExtension];
+
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"重命名" message:nil preferredStyle:UIAlertControllerStyleAlert];
+        [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+            tf.text = nameOnly;
+            tf.placeholder = @"新文件名";
+            tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+        }];
+        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            NSString *newName = alert.textFields.firstObject.text;
+            if (!newName || newName.length == 0) { [AWECAUtils showToast:@"文件名不能为空"]; handler(NO); return; }
+            NSString *cleanName = [AWECAUtils sanitizeFilename:newName maxLength:50];
+            NSString *newFileName = [cleanName stringByAppendingPathExtension:ext];
+            NSString *newPath = [[item[@"path"] stringByDeletingLastPathComponent] stringByAppendingPathComponent:newFileName];
+            if ([[NSFileManager defaultManager] fileExistsAtPath:newPath]) { [AWECAUtils showToast:@"文件名已存在"]; handler(NO); return; }
+            NSError *err = nil;
+            BOOL ok = [[NSFileManager defaultManager] moveItemAtPath:item[@"path"] toPath:newPath error:&err];
+            if (ok) {
+                [self loadItems];
+                [tv reloadData];
+                [AWECAUtils showToast:[NSString stringWithFormat:@"已重命名为 %@", newFileName]];
+            } else {
+                [AWECAUtils showToast:@"重命名失败"];
+            }
+            handler(ok);
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) { handler(NO); }]];
+        [self presentViewController:alert animated:YES completion:nil];
+    }];
+    renameAction.backgroundColor = [UIColor systemBlueColor];
+
+    return [UISwipeActionsConfiguration configurationWithActions:@[deleteAction, renameAction]];
 }
 
 @end

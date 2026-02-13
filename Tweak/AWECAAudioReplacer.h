@@ -22,6 +22,13 @@
 // 设置替换音频，不是m4a自动转
 - (void)setReplacementFromPath:(NSString *)path completion:(void(^)(BOOL success))completion;
 
+// TTS专用：转码到Ai合成目录，转完删原始文件
+- (void)setReplacementFromTTSPath:(NSString *)path
+                             text:(NSString *)text
+                        voiceName:(NSString *)voiceName
+                         provider:(NSInteger)provider
+                       completion:(void(^)(BOOL success))completion;
+
 // 清除替换，恢复原装录音
 - (void)clearReplacement;
 
