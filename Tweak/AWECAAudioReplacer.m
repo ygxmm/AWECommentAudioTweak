@@ -4,6 +4,9 @@
 #import "AWECAAudioReplacer.h"
 #import "AWECAUtils.h"
 
+// ttsAudioPath 持久化 key
+#define kAWECATTSAudioPath @"AWECATTSAudioPath"
+
 @implementation AWECAAudioReplacer
 
 + (instancetype)shared {
@@ -17,6 +20,12 @@
 }
 
 #pragma mark - 设置替换
+
+// 当前生效的是不是AI合成的
+- (BOOL)isUsingTTS {
+    if (!self.enabled || !self.replacementAudioPath || !self.ttsAudioPath) return NO;
+    return [self.replacementAudioPath isEqualToString:self.ttsAudioPath];
+}
 
 - (void)setReplacementFromPath:(NSString *)path completion:(void(^)(BOOL success))completion {
     if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) {
@@ -90,6 +99,7 @@
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setBool:self.enabled forKey:kAWECAReplacementEnabled];
     [defaults setObject:self.replacementAudioPath forKey:kAWECAReplacementAudioPath];
+    [defaults setObject:self.ttsAudioPath forKey:kAWECATTSAudioPath];
     [defaults synchronize];
 }
 
@@ -97,11 +107,17 @@
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     self.enabled = [defaults boolForKey:kAWECAReplacementEnabled];
     self.replacementAudioPath = [defaults objectForKey:kAWECAReplacementAudioPath];
+    self.ttsAudioPath = [defaults objectForKey:kAWECATTSAudioPath];
 
     // 路径没了就自动关掉
     if (self.replacementAudioPath && ![[NSFileManager defaultManager] fileExistsAtPath:self.replacementAudioPath]) {
         self.enabled = NO;
         self.replacementAudioPath = nil;
+        [self saveState];
+    }
+    // ttsAudioPath 文件没了也清掉
+    if (self.ttsAudioPath && ![[NSFileManager defaultManager] fileExistsAtPath:self.ttsAudioPath]) {
+        self.ttsAudioPath = nil;
         [self saveState];
     }
 }

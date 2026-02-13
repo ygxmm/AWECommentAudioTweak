@@ -370,7 +370,41 @@ static NSString *const kTelegramIconB64 = @"iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAMA
 #pragma mark - 选音频
 
 - (void)selectAudioAtPath:(NSString *)path {
-    [[AWECAAudioReplacer shared] setReplacementFromPath:path completion:^(BOOL success) {
+    AWECAAudioReplacer *replacer = [AWECAAudioReplacer shared];
+
+    // 检测当前是否在用AI合成音频
+    if (replacer.isUsingTTS) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"当前已使用Ai合成语音"
+                                                                      message:@"是否切换为普通语音替换?"
+                                                               preferredStyle:UIAlertControllerStyleActionSheet];
+
+        [alert addAction:[UIAlertAction actionWithTitle:@"不使用Ai" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            [replacer setReplacementFromPath:path completion:^(BOOL success) {
+                if (success) {
+                    double dur = [AWECAUtils audioDurationAtPath:path];
+                    [AWECAUtils showToast:[NSString stringWithFormat:@"已选择 (%.0f秒)", dur]];
+                }
+            }];
+            [self dismissViewControllerAnimated:YES completion:nil];
+        }]];
+
+        [alert addAction:[UIAlertAction actionWithTitle:@"使用Ai" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            [self dismissViewControllerAnimated:YES completion:nil];
+        }]];
+
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+
+        if (alert.popoverPresentationController) {
+            alert.popoverPresentationController.sourceView = self.view;
+            alert.popoverPresentationController.sourceRect = CGRectMake(self.view.bounds.size.width / 2, self.view.bounds.size.height / 2, 0, 0);
+        }
+
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+    // 无冲突，直接设
+    [replacer setReplacementFromPath:path completion:^(BOOL success) {
         if (success) {
             double dur = [AWECAUtils audioDurationAtPath:path];
             [AWECAUtils showToast:[NSString stringWithFormat:@"已选择 (%.0f秒)", dur]];

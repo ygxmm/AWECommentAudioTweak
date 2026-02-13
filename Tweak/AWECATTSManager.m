@@ -182,17 +182,29 @@
     [self saveConfig];
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        // 设为替换音频
-        [[AWECAAudioReplacer shared] setReplacementFromPath:savePath completion:^(BOOL ok) {
-            if (completion) {
-                if (ok) {
-                    double dur = [AWECAUtils audioDurationAtPath:savePath];
-                    completion(YES, savePath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
-                } else {
-                    completion(NO, savePath, @"合成成功但设置替换失败");
+        // 先存到 ttsAudioPath
+        AWECAAudioReplacer *replacer = [AWECAAudioReplacer shared];
+        replacer.ttsAudioPath = savePath;
+        [replacer saveState];
+
+        // 检测是否有普通音频冲突
+        BOOL hasNormalAudio = replacer.enabled && replacer.replacementAudioPath.length > 0 && !replacer.isUsingTTS;
+        if (hasNormalAudio) {
+            // 有冲突，弹选择器
+            [self showTTSConflictAlertWithPath:savePath completion:completion];
+        } else {
+            // 无冲突，直接设为替换
+            [replacer setReplacementFromPath:savePath completion:^(BOOL ok) {
+                if (completion) {
+                    if (ok) {
+                        double dur = [AWECAUtils audioDurationAtPath:savePath];
+                        completion(YES, savePath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
+                    } else {
+                        completion(NO, savePath, @"合成成功但设置替换失败");
+                    }
                 }
-            }
-        }];
+            }];
+        }
     });
 }
 
@@ -314,18 +326,76 @@
         [self saveConfig];
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            [[AWECAAudioReplacer shared] setReplacementFromPath:savePath completion:^(BOOL ok) {
-                if (completion) {
-                    if (ok) {
-                        double dur = [AWECAUtils audioDurationAtPath:savePath];
-                        completion(YES, savePath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
-                    } else {
-                        completion(NO, savePath, @"合成成功但设置替换失败");
+            // 先存到 ttsAudioPath
+            AWECAAudioReplacer *replacer = [AWECAAudioReplacer shared];
+            replacer.ttsAudioPath = savePath;
+            [replacer saveState];
+
+            // 检测是否有普通音频冲突
+            BOOL hasNormalAudio = replacer.enabled && replacer.replacementAudioPath.length > 0 && !replacer.isUsingTTS;
+            if (hasNormalAudio) {
+                [self showTTSConflictAlertWithPath:savePath completion:completion];
+            } else {
+                [replacer setReplacementFromPath:savePath completion:^(BOOL ok) {
+                    if (completion) {
+                        if (ok) {
+                            double dur = [AWECAUtils audioDurationAtPath:savePath];
+                            completion(YES, savePath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
+                        } else {
+                            completion(NO, savePath, @"合成成功但设置替换失败");
+                        }
                     }
-                }
-            }];
+                }];
+            }
         });
     }] resume];
+}
+
+#pragma mark - 冲突选择器
+
+- (void)showTTSConflictAlertWithPath:(NSString *)ttsPath
+                          completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion {
+    UIViewController *topVC = [AWECAUtils topViewController];
+    if (!topVC) {
+        // 没VC就直接覆盖，别卡死
+        [[AWECAAudioReplacer shared] setReplacementFromPath:ttsPath completion:^(BOOL ok) {
+            if (completion) completion(ok, ttsPath, ok ? @"语音合成成功" : @"设置替换失败");
+        }];
+        return;
+    }
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"当前已选择普通语音替换"
+                                                                  message:@"是否切换为Ai合成语音?"
+                                                           preferredStyle:UIAlertControllerStyleActionSheet];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"使用Ai" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [[AWECAAudioReplacer shared] setReplacementFromPath:ttsPath completion:^(BOOL ok) {
+            if (completion) {
+                if (ok) {
+                    double dur = [AWECAUtils audioDurationAtPath:ttsPath];
+                    completion(YES, ttsPath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
+                } else {
+                    completion(NO, ttsPath, @"合成成功但设置替换失败");
+                }
+            }
+        }];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"不使用Ai" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        // ttsAudioPath 已存好，不动 replacementAudioPath
+        if (completion) completion(YES, ttsPath, @"合成已保存，当前使用普通语音");
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+        if (completion) completion(YES, ttsPath, @"合成已保存");
+    }]];
+
+    if (alert.popoverPresentationController) {
+        alert.popoverPresentationController.sourceView = topVC.view;
+        alert.popoverPresentationController.sourceRect = CGRectMake(topVC.view.bounds.size.width / 2, topVC.view.bounds.size.height, 0, 0);
+    }
+
+    [topVC presentViewController:alert animated:YES completion:nil];
 }
 
 #pragma mark - 试听播放
