@@ -172,7 +172,6 @@
     [[AWECATTSManager shared] synthesizeText:text completion:^(BOOL success, NSString *audioPath, NSString *error) {
         self.isSynthesizing = NO;
         if (success) {
-            [AWECAUtils showToast:error ?: @"合成成功"];
             // 先收自己的键盘
             [self.view endEditing:YES];
             [self dismissViewControllerAnimated:YES completion:^{

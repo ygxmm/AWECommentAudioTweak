@@ -110,10 +110,26 @@ static BOOL loadArchiveLibrary(void) {
 #pragma mark - Toast
 
 + (void)showToast:(NSString *)message {
+    [self showToast:message duration:1.8];
+}
+
++ (void)showToast:(NSString *)message duration:(NSTimeInterval)duration {
     // 主线程弹 toast，UIKit 规矩不能破
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *topVC = [self topViewController];
-        if (!topVC) return;
+        // 用 keyWindow，不跟着滚
+        UIWindow *keyWindow = nil;
+        for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
+            if (s.activationState == UISceneActivationStateForegroundActive && [s isKindOfClass:[UIWindowScene class]]) {
+                for (UIWindow *w in ((UIWindowScene *)s).windows) {
+                    if (w.isKeyWindow) {
+                        keyWindow = w;
+                        break;
+                    }
+                }
+                if (keyWindow) break;
+            }
+        }
+        if (!keyWindow) return;
 
         UILabel *toastLabel = [[UILabel alloc] init];
         toastLabel.text = message;
@@ -126,7 +142,7 @@ static BOOL loadArchiveLibrary(void) {
         toastLabel.clipsToBounds = YES;
         toastLabel.alpha = 0;
 
-        CGSize maxSize = CGSizeMake(topVC.view.bounds.size.width - 80, CGFLOAT_MAX);
+        CGSize maxSize = CGSizeMake(keyWindow.bounds.size.width - 80, CGFLOAT_MAX);
         CGSize textSize = [message boundingRectWithSize:maxSize
                                                options:NSStringDrawingUsesLineFragmentOrigin
                                             attributes:@{NSFontAttributeName: toastLabel.font}
@@ -134,16 +150,17 @@ static BOOL loadArchiveLibrary(void) {
 
         CGFloat width = textSize.width + 32;
         CGFloat height = textSize.height + 20;
-        toastLabel.frame = CGRectMake((topVC.view.bounds.size.width - width) / 2,
-                                      topVC.view.bounds.size.height - 160,
+        // 屏幕正中间
+        toastLabel.frame = CGRectMake((keyWindow.bounds.size.width - width) / 2,
+                                      (keyWindow.bounds.size.height - height) / 2,
                                       width, height);
 
-        [topVC.view addSubview:toastLabel];
+        [keyWindow addSubview:toastLabel];
 
         [UIView animateWithDuration:0.3 animations:^{
             toastLabel.alpha = 1;
         } completion:^(BOOL finished) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 [UIView animateWithDuration:0.3 animations:^{
                     toastLabel.alpha = 0;
                 } completion:^(BOOL finished) {

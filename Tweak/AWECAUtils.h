@@ -27,6 +27,7 @@
 
 // 弹个 toast 告诉用户咋回事
 + (void)showToast:(NSString *)message;
++ (void)showToast:(NSString *)message duration:(NSTimeInterval)duration;
 
 // 转码成 m4a，格式统一才是正义
 + (void)convertAudioAtPath:(NSString *)inputPath

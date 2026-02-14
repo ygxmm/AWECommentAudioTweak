@@ -285,7 +285,7 @@ static void hook_audioIconViewDidLoad(id self, SEL _cmd) {
     UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightRegular];
     UIImage *aiIcon = [UIImage systemImageNamed:@"icloud.circle" withConfiguration:cfg];
     [aiBtn setImage:aiIcon forState:UIControlStateNormal];
-    aiBtn.tintColor = [UIColor whiteColor];
+    aiBtn.tintColor = [UIColor labelColor];  // 自动适配深浅
     aiBtn.frame = CGRectMake(0, 0, 24, 24);
     [aiBtn addTarget:stackView action:@selector(aweca_aiButtonTapped) forControlEvents:UIControlEventTouchUpInside];
     [aiContainer addSubview:aiBtn];

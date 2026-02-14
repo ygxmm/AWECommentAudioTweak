@@ -273,7 +273,7 @@ typedef NS_ENUM(NSInteger, AWECAVoiceSection) {
     mgr.ttsProvider = self.provider;  // 用当前页的后端
 
     [AWECAUtils showToast:@"正在试听..."];
-    [mgr synthesizeText:@"你好，这是语音试听" completion:^(BOOL success, NSString *audioPath, NSString *error) {
+    [mgr previewText:@"你好，这是语音试听" completion:^(BOOL success, NSString *audioPath, NSString *error) {
         // 恢复原配置
         mgr.voiceType = origType;
         mgr.voiceName = origName;

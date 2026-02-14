@@ -56,6 +56,10 @@ typedef NS_ENUM(NSInteger, AWECATTSProvider) {
 - (void)synthesizeText:(NSString *)text
             completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion;
 
+// 试听专用，只合成不替换
+- (void)previewText:(NSString *)text
+         completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion;
+
 // 试听三件套
 - (void)playAudioAtPath:(NSString *)path;
 - (void)stopPlayback;

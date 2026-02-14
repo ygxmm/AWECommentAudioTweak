@@ -36,6 +36,17 @@
 
 - (void)synthesizeText:(NSString *)text
             completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion {
+    [self synthesizeText:text previewOnly:NO completion:completion];
+}
+
+- (void)previewText:(NSString *)text
+         completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion {
+    [self synthesizeText:text previewOnly:YES completion:completion];
+}
+
+- (void)synthesizeText:(NSString *)text
+           previewOnly:(BOOL)previewOnly
+            completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion {
     if (!text || text.length == 0) {
         if (completion) completion(NO, nil, @"请输入要合成的文字");
         return;
@@ -43,7 +54,7 @@
 
     // 根据后端分发
     if (self.ttsProvider == AWECATTSProviderQwen) {
-        [self synthesizeWithQwen:text completion:completion];
+        [self synthesizeWithQwen:text previewOnly:previewOnly completion:completion];
         return;
     }
 
@@ -121,7 +132,7 @@
             return;
         }
 
-        [self parseResponse:data text:text completion:completion];
+        [self parseResponse:data text:text previewOnly:previewOnly completion:completion];
     }] resume];
 }
 
@@ -129,6 +140,7 @@
 
 - (void)parseResponse:(NSData *)data
                  text:(NSString *)text
+          previewOnly:(BOOL)previewOnly
            completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion {
     NSError *jsonErr = nil;
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonErr];
@@ -183,6 +195,12 @@
     [self saveConfig];
 
     dispatch_async(dispatch_get_main_queue(), ^{
+        // 试听模式直接返回
+        if (previewOnly) {
+            if (completion) completion(YES, savePath, nil);
+            return;
+        }
+
         // 先存到 ttsAudioPath
         AWECAAudioReplacer *replacer = [AWECAAudioReplacer shared];
         replacer.ttsAudioPath = savePath;
@@ -200,6 +218,7 @@
                 if (completion) {
                     if (ok) {
                         double dur = [AWECAUtils audioDurationAtPath:weakReplacer.replacementAudioPath];
+                        [AWECAUtils showToast:@"成功合成！随意录制语音评论即可自动替换" duration:3.0];
                         completion(YES, weakReplacer.replacementAudioPath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
                     } else {
                         completion(NO, savePath, @"合成成功但设置替换失败");
@@ -213,6 +232,7 @@
 #pragma mark - 千问合成
 
 - (void)synthesizeWithQwen:(NSString *)text
+               previewOnly:(BOOL)previewOnly
                 completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion {
     if (self.qwenAPIKey.length == 0) {
         if (completion) completion(NO, nil, @"请先在配置页填写千问 API Key");
@@ -261,12 +281,13 @@
             });
             return;
         }
-        [self parseQwenResponse:data text:text completion:completion];
+        [self parseQwenResponse:data text:text previewOnly:previewOnly completion:completion];
     }] resume];
 }
 
 - (void)parseQwenResponse:(NSData *)data
                      text:(NSString *)text
+              previewOnly:(BOOL)previewOnly
                completion:(void(^)(BOOL success, NSString *audioPath, NSString *error))completion {
     NSError *jsonErr = nil;
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonErr];
@@ -329,6 +350,12 @@
         [self saveConfig];
 
         dispatch_async(dispatch_get_main_queue(), ^{
+            // 试听模式直接返回
+            if (previewOnly) {
+                if (completion) completion(YES, savePath, nil);
+                return;
+            }
+
             // 先存到 ttsAudioPath
             AWECAAudioReplacer *replacer = [AWECAAudioReplacer shared];
             replacer.ttsAudioPath = savePath;
@@ -346,6 +373,7 @@
                     if (completion) {
                         if (ok) {
                             double dur = [AWECAUtils audioDurationAtPath:weakReplacer.replacementAudioPath];
+                            [AWECAUtils showToast:@"成功合成！随意录制语音评论即可自动替换" duration:3.0];
                             completion(YES, weakReplacer.replacementAudioPath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
                         } else {
                             completion(NO, savePath, @"合成成功但设置替换失败");
@@ -384,6 +412,7 @@
             if (completion) {
                 if (ok) {
                     double dur = [AWECAUtils audioDurationAtPath:weakReplacer.replacementAudioPath];
+                    [AWECAUtils showToast:@"成功合成！随意录制语音评论即可自动替换" duration:3.0];
                     completion(YES, weakReplacer.replacementAudioPath, [NSString stringWithFormat:@"语音合成成功 (%.1f秒)", dur]);
                 } else {
                     completion(NO, ttsPath, @"合成成功但设置替换失败");
