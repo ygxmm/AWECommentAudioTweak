@@ -181,4 +181,12 @@
 - (void)startUploadAudioWithFilePath:(id)arg1;
 @end
 
+// ==================== AWEUIThemeManager - 主题管理 ====================
+
+@interface AWEUIThemeManager : NSObject
++ (id)sharedInstance;
++ (BOOL)isLightTheme;
+- (id)currentTheme;
+@end
+
 

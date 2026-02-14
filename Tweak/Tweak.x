@@ -244,6 +244,20 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
     aiContainer.frame = CGRectMake(aiX, 0, 24, 24);
     aiContainer.hidden = NO;
     aiContainer.alpha = 1.0;
+    
+    // 动态更新图标颜色
+    UIButton *aiBtn = nil;
+    for (UIView *sub in aiContainer.subviews) {
+        if ([sub isKindOfClass:[UIButton class]]) {
+            aiBtn = (UIButton *)sub;
+            break;
+        }
+    }
+    if (aiBtn) {
+        Class themeMgr = NSClassFromString(@"AWEUIThemeManager");
+        BOOL isLight = themeMgr ? [themeMgr isLightTheme] : NO;
+        aiBtn.tintColor = isLight ? [UIColor blackColor] : [UIColor whiteColor];
+    }
 }
 
 static void (*orig_audioIconViewDidLoad)(id self, SEL _cmd);
@@ -285,7 +299,11 @@ static void hook_audioIconViewDidLoad(id self, SEL _cmd) {
     UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightRegular];
     UIImage *aiIcon = [UIImage systemImageNamed:@"icloud.circle" withConfiguration:cfg];
     [aiBtn setImage:aiIcon forState:UIControlStateNormal];
-    aiBtn.tintColor = [UIColor labelColor];  // 自动适配深浅
+    
+    // 用主题管理器判断颜色
+    Class themeMgr = NSClassFromString(@"AWEUIThemeManager");
+    BOOL isLight = themeMgr ? [themeMgr isLightTheme] : NO;
+    aiBtn.tintColor = isLight ? [UIColor blackColor] : [UIColor whiteColor];
     aiBtn.frame = CGRectMake(0, 0, 24, 24);
     [aiBtn addTarget:stackView action:@selector(aweca_aiButtonTapped) forControlEvents:UIControlEventTouchUpInside];
     [aiContainer addSubview:aiBtn];
