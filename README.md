@@ -27,6 +27,10 @@
 |:---:|:---:|:---:|
 | ![加入推荐](Screenshots/07_add_recommend.PNG) | ![输入合成](Screenshots/08_tts_input.PNG) | ![音色选择](Screenshots/09_voice_select.PNG) |
 
+| 按钮布局修复 |
+|:---:|
+| ![按钮布局](Screenshots/10_button_layout_fixed.PNG) |
+
 ## 使用方法
 
 1. 编译 dylib：`make -C AWECommentAudioTweak`
@@ -95,3 +99,9 @@ AI 语音合成功能基于[火山引擎语音合成](https://www.volcengine.com
 ## 作者
 
 [@cookieodd](https://github.com/cookieodd) | [Telegram](https://t.me/cookieodd)
+
+## 更新日志
+
+### v1.0.0 (2026-03-26)
+- 修复 AI 按钮与定位按钮重叠问题
+- 优化按钮间距布局(16px 间距)
