@@ -162,6 +162,28 @@
 @interface AWEElementStackView : UIView
 @end
 
+// ==================== 评论输入框按钮元素 ====================
+
+// 图片按钮
+@interface AWECommentInputViewSwiftImpl_CommentImageIconElement : AWEBaseElement
+@end
+
+// @按钮
+@interface AWECommentInputViewSwiftImpl_CommentAtIconElement : AWEBaseElement
+@end
+
+// 表情按钮
+@interface AWECommentInputViewSwiftImpl_CommentEmojiIconElement : AWEBaseElement
+@end
+
+// 语音按钮
+@interface AWECommentInputViewSwiftImpl_CommentAudioIconElement : AWEBaseElement
+@end
+
+// 定位按钮
+@interface AWECommentInputViewSwiftImpl_CommentPoiIconElement : AWEBaseElement
+@end
+
 // ==================== 播放控制器 ====================
 
 @interface AWECommentListAudioPlayerController : NSObject

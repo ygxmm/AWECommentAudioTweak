@@ -357,5 +357,4 @@ static BOOL loadArchiveLibrary(void) {
 
     return success;
 }
-
 @end

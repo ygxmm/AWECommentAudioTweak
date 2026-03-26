@@ -197,7 +197,7 @@ static void aweca_aiButtonTappedIMP(id self, SEL _cmd) {
     [vc presentViewController:nav animated:YES completion:nil];
 }
 
-// 定位 AI 按钮：找可见的 Audio 按钮，动态算间距
+// 更新AI按钮位置，重新布局所有按钮
 static void aweca_updateAIButtonPosition(UIView *stackView) {
     UIView *aiContainer = [stackView viewWithTag:19528];
     if (!aiContainer) return;
@@ -205,12 +205,14 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
     Class evClass = NSClassFromString(@"AWEBaseElementView");
     if (!evClass) return;
 
-    // 通过红点 tag 找到可见的 Audio 按钮，跳过隐藏的
+    // 找语音按钮（有红点tag）
     UIView *audioElement = nil;
     for (UIView *sub in stackView.subviews) {
         if (![sub isKindOfClass:evClass]) continue;
-        if (sub.hidden || sub.alpha < 0.01) continue;
-        if ([sub viewWithTag:19527]) { audioElement = sub; break; }
+        if ([sub viewWithTag:19527]) { 
+            audioElement = sub; 
+            break; 
+        }
     }
 
     if (!audioElement) {
@@ -219,33 +221,76 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
         return;
     }
 
-    CGFloat audioRight = CGRectGetMaxX(audioElement.frame);
-    if (audioRight <= 0) {
-        aiContainer.hidden = YES;
-        aiContainer.alpha = 0.0;
-        return;
-    }
-
-    // 动态算间距：收集可见按钮的 x，取相邻差值
-    NSMutableArray *xs = [NSMutableArray array];
+    // 收集所有可见按钮，按accessibilityId识别类型
+    NSMutableArray *buttons = [NSMutableArray array];
     for (UIView *sub in stackView.subviews) {
         if (![sub isKindOfClass:evClass]) continue;
-        if (sub.hidden || sub.alpha < 0.01 || sub.frame.origin.x < 0) continue;
-        [xs addObject:@(sub.frame.origin.x)];
-    }
-    [xs sortUsingSelector:@selector(compare:)];
-    CGFloat gap = 16;
-    if (xs.count >= 2) {
-        CGFloat d = [xs[1] floatValue] - [xs[0] floatValue] - 24;
-        if (d > 0) gap = d;
+        if (sub.hidden || sub.alpha < 0.01) continue;
+        if (sub.frame.size.width == 0) continue;
+        
+        // 通过子视图的 accessibilityId 识别按钮类型
+        UIButton *btn = nil;
+        for (UIView *child in sub.subviews) {
+            if ([child isKindOfClass:[UIButton class]]) {
+                btn = (UIButton *)child;
+                break;
+            }
+        }
+        
+        NSString *type = @"unknown";
+        if (btn && btn.accessibilityIdentifier) {
+            if ([btn.accessibilityIdentifier containsString:@"Image"]) type = @"image";
+            else if ([btn.accessibilityIdentifier containsString:@"At"]) type = @"at";
+            else if ([btn.accessibilityIdentifier containsString:@"Emoji"]) type = @"emoji";
+            else if ([btn.accessibilityIdentifier containsString:@"Poi"]) type = @"poi";
+        }
+        
+        // 语音按钮通过红点识别
+        if (sub == audioElement) type = @"audio";
+        
+        [buttons addObject:@{@"view": sub, @"type": type, @"originalX": @(sub.frame.origin.x)}];
     }
 
-    CGFloat aiX = audioRight + gap;
-    aiContainer.frame = CGRectMake(aiX, 0, 24, 24);
-    aiContainer.hidden = NO;
-    aiContainer.alpha = 1.0;
+    // 按原始x排序
+    [buttons sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        return [a[@"originalX"] compare:b[@"originalX"]];
+    }];
+
+    // 重新布局：图片0, @40, 表情80, 语音120, AI160, 定位200
+    NSDictionary *targetPositions = @{
+        @"image": @0,
+        @"at": @40,
+        @"emoji": @80,
+        @"audio": @120,
+        @"poi": @200
+    };
     
-    // 动态更新图标颜色
+    BOOL hasAudio = NO;
+    for (NSDictionary *info in buttons) {
+        NSString *type = info[@"type"];
+        UIView *btn = info[@"view"];
+        
+        NSNumber *targetX = targetPositions[type];
+        if (targetX) {
+            CGRect frame = btn.frame;
+            frame.origin.x = [targetX floatValue];
+            btn.frame = frame;
+            
+            if ([type isEqualToString:@"audio"]) hasAudio = YES;
+        }
+    }
+
+    // AI按钮固定在160
+    if (hasAudio) {
+        aiContainer.frame = CGRectMake(160, 0, 24, 24);
+        aiContainer.hidden = NO;
+        aiContainer.alpha = 1.0;
+    } else {
+        aiContainer.hidden = YES;
+        aiContainer.alpha = 0.0;
+    }
+    
+    // 更新图标颜色
     UIButton *aiBtn = nil;
     for (UIView *sub in aiContainer.subviews) {
         if ([sub isKindOfClass:[UIButton class]]) {
@@ -342,13 +387,14 @@ static void setupAudioIconElementHook(void) {
     }
 }
 
-// === Hook 8: StackView layoutSubviews，每次布局都重新定位 AI 按钮 ===
+// === Hook 8: StackView layoutSubviews，更新AI按钮 ===
 
 static void (*orig_stackViewLayoutSubviews)(id self, SEL _cmd);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     orig_stackViewLayoutSubviews(self, _cmd);
-    // 有 AI 按钮才处理，避免无关 stackView 白跑
+    
     UIView *sv = (UIView *)self;
+    // 有 AI 按钮才处理
     if ([sv viewWithTag:19528]) {
         aweca_updateAIButtonPosition(sv);
     }
