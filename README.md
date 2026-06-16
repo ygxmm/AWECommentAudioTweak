@@ -98,7 +98,7 @@ AI 语音合成功能基于[火山引擎语音合成](https://www.volcengine.com
 
 ## 作者
 
-[@cookieodd](https://github.com/cookieodd) | [Telegram](https://t.me/cookieodd)
+[@cookieodd](https://github.com/cookieodd) | [Telegram](https://t.me/Codew4ve)
 
 ## 更新日志
 
