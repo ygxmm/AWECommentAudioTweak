@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（修复生效）
+// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（最终稳定版）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -16,7 +16,7 @@ static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
 
-// 关联对象 key
+// 关联对象 key，记录每个 StackView 是否已成功移动
 static char kMorePanelMovedKey;
 
 // === Hook 1: 录音后替换音频 ===
@@ -390,7 +390,7 @@ static void setupAudioIconElementHook(void) {
     }
 }
 
-// === 优化后的 StackView 布局 Hook（每个实例移动一次，无卡顿） ===
+// === 最终版 StackView 布局 Hook：找到即移动，成功后标记，不重复 ===
 
 static void (*orig_stackViewLayoutSubviews)(id self, SEL _cmd);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
@@ -403,20 +403,20 @@ static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
         aweca_updateAIButtonPosition(stackView);
     }
 
-    // 每个实例只移动一次
+    // 每个实例只尝试移动，直到成功为止
     NSNumber *moved = objc_getAssociatedObject(stackView, &kMorePanelMovedKey);
-    if (!moved || ![moved boolValue]) {
-        objc_setAssociatedObject(stackView, &kMorePanelMovedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIView *moreElementView = findMorePanelElementView(stackView);
-            if (moreElementView) {
-                CGRect frame = moreElementView.frame;
-                if (frame.origin.x != 240) {
-                    frame.origin.x = 240;
-                    moreElementView.frame = frame;
-                }
+    if (![moved boolValue]) {
+        UIView *moreElementView = findMorePanelElementView(stackView);
+        if (moreElementView) {
+            CGRect frame = moreElementView.frame;
+            if (frame.origin.x != 240) {
+                frame.origin.x = 240;
+                moreElementView.frame = frame;
             }
-        });
+            // 移动成功后标记，后续不再查找
+            objc_setAssociatedObject(stackView, &kMorePanelMovedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        // 如果没找到按钮，不标记，下次 layoutSubviews 继续尝试
     }
 }
 
