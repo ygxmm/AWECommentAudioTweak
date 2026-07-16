@@ -1,0 +1,38 @@
+name: Build Tweak
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:   # 允许手动触发
+
+jobs:
+  build:
+    runs-on: macos-latest   # 使用 macOS 环境（Theos 需要 macOS 或 Linux）
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Theos
+        run: |
+          # 安装 Theos（如果未安装）
+          export THEOS=/opt/theos
+          if [ ! -d "$THEOS" ]; then
+            git clone --recursive https://github.com/theos/theos.git $THEOS
+          fi
+          # 确保 Theos 环境变量生效
+          echo "THEOS=/opt/theos" >> $GITHUB_ENV
+          echo "$THEOS/bin" >> $GITHUB_PATH
+
+      - name: Build package
+        run: |
+          cd $GITHUB_WORKSPACE
+          make package FINALPACKAGE=1
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tweak-package
+          path: packages/*.deb
