@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（流畅版）
+// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（修复生效）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -15,6 +15,9 @@ static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
+
+// 关联对象 key
+static char kMorePanelMovedKey;
 
 // === Hook 1: 录音后替换音频 ===
 
@@ -387,7 +390,7 @@ static void setupAudioIconElementHook(void) {
     }
 }
 
-// === 优化后的 StackView 布局 Hook（只移动一次，无卡顿） ===
+// === 优化后的 StackView 布局 Hook（每个实例移动一次，无卡顿） ===
 
 static void (*orig_stackViewLayoutSubviews)(id self, SEL _cmd);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
@@ -400,18 +403,21 @@ static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
         aweca_updateAIButtonPosition(stackView);
     }
 
-    // 使用 dispatch_once 确保整个生命周期仅移动一次，且延迟到当前布局周期结束
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
+    // 每个实例只移动一次
+    NSNumber *moved = objc_getAssociatedObject(stackView, &kMorePanelMovedKey);
+    if (!moved || ![moved boolValue]) {
+        objc_setAssociatedObject(stackView, &kMorePanelMovedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         dispatch_async(dispatch_get_main_queue(), ^{
             UIView *moreElementView = findMorePanelElementView(stackView);
-            if (moreElementView && moreElementView.frame.origin.x != 240) {
+            if (moreElementView) {
                 CGRect frame = moreElementView.frame;
-                frame.origin.x = 240;
-                moreElementView.frame = frame;
+                if (frame.origin.x != 240) {
+                    frame.origin.x = 240;
+                    moreElementView.frame = frame;
+                }
             }
         });
-    });
+    }
 }
 
 static void setupStackViewLayoutHook(void) {
@@ -435,6 +441,5 @@ static void setupStackViewLayoutHook(void) {
         setupAudioInputElementHook();
         setupAudioIconElementHook();
         setupStackViewLayoutHook();
-        // 不再需要额外定时器，首次布局时自动完成移动
     }
 }
