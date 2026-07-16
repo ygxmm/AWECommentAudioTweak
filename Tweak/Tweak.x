@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240
+// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（稳定版）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -15,9 +15,9 @@ static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
-static UIView *findElementStackView(UIView *view);   // 新增辅助函数
+static UIView *findElementStackView(UIView *view);
 
-// === Hook 1: 录完就偷梁换柱 ===
+// === Hook 1: 录音后替换音频 ===
 
 %hook AWECommentAudioRecorderController
 
@@ -49,7 +49,7 @@ static UIView *findElementStackView(UIView *view);   // 新增辅助函数
 
 %end
 
-// === Hook 2: 播放时顺手把 CDN 链接薅了 ===
+// === Hook 2: 播放时缓存 CDN 链接 ===
 
 %hook AWECommentAudioPlayerManager
 
@@ -70,7 +70,7 @@ static UIView *findElementStackView(UIView *view);   // 新增辅助函数
 
 %end
 
-// === Hook 3: 长按菜单加个保存语音的活 ===
+// === Hook 3: 长按菜单添加保存语音 ===
 
 %hook AWECommentLongPressPanelAdaptar
 
@@ -94,7 +94,7 @@ static UIView *findElementStackView(UIView *view);   // 新增辅助函数
 
 %end
 
-// === Hook 5: 上传前再换一波，双保险 ===
+// === Hook 5: 上传前再替换音频 ===
 
 %hook AWECommentAudioUploadManager
 
@@ -130,7 +130,7 @@ static UIView *findElementStackView(UIView *view);   // 新增辅助函数
 
 %end
 
-// === Hook 6: 预览气泡也得换，顺便修时长 ===
+// === Hook 6: 预览气泡更换音频并修正时长 ===
 
 static void (*orig_generateAudioPreviewBubble)(id self, SEL _cmd, id recordedModel);
 static void hook_generateAudioPreviewBubble(id self, SEL _cmd, id recordedModel) {
@@ -161,7 +161,7 @@ static void setupAudioInputElementHook(void) {
     }
 }
 
-// === 查找“更多面板”所在的 AWEBaseElementView（辅助函数）===
+// === 辅助函数：查找包含“更多面板”按钮的 AWEBaseElementView ===
 static UIView *findMorePanelElementView(UIView *stackView) {
     Class evClass = NSClassFromString(@"AWEBaseElementView");
     if (!evClass) return nil;
@@ -190,7 +190,7 @@ static UIView *findElementStackView(UIView *view) {
     return nil;
 }
 
-// === 重新布局其他工具栏按钮（AI 按钮、语音等），但不影响“更多面板”移动 ===
+// === 保留原有的 AI 按钮、语音布局更新函数 ===
 
 static void aweca_updateAIButtonPosition(UIView *stackView) {
     UIView *aiContainer = [stackView viewWithTag:19528];
@@ -199,7 +199,6 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
     Class evClass = NSClassFromString(@"AWEBaseElementView");
     if (!evClass) return;
 
-    // 找语音按钮（有红点tag）
     UIView *audioElement = nil;
     for (UIView *sub in stackView.subviews) {
         if (![sub isKindOfClass:evClass]) continue;
@@ -214,7 +213,6 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
         aiContainer.alpha = 0.0;
     }
 
-    // 收集所有可见按钮
     NSMutableArray *buttons = [NSMutableArray array];
     for (UIView *sub in stackView.subviews) {
         if (![sub isKindOfClass:evClass]) continue;
@@ -244,12 +242,10 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
         [buttons addObject:@{@"view": sub, @"type": type, @"originalX": @(sub.frame.origin.x)}];
     }
 
-    // 按原始x排序
     [buttons sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
         return [a[@"originalX"] compare:b[@"originalX"]];
     }];
 
-    // 固定其他按钮位置
     NSDictionary *targetPositions = @{
         @"image": @0,
         @"at": @40,
@@ -272,7 +268,6 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
         }
     }
 
-    // AI按钮固定在160
     if (hasAudio && audioElement) {
         aiContainer.frame = CGRectMake(160, 0, 24, 24);
         aiContainer.hidden = NO;
@@ -296,7 +291,7 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
     }
 }
 
-// AI 按钮点击处理
+// AI 按钮点击
 static void aweca_aiButtonTappedIMP(id self, SEL _cmd) {
     UIViewController *vc = [AWECAUtils topViewController];
     AWECATTSController *tts = [[AWECATTSController alloc] init];
@@ -332,7 +327,7 @@ static void aweca_longPressAudioIconIMP(id self, SEL _cmd, UILongPressGestureRec
     [[AWECAAudioPickerController shared] showPickerFromViewController:vc];
 }
 
-// 注入语音按钮元素
+// 注入语音按钮和 AI 按钮
 static void (*orig_audioIconViewDidLoad)(id self, SEL _cmd);
 static void hook_audioIconViewDidLoad(id self, SEL _cmd) {
     orig_audioIconViewDidLoad(self, _cmd);
@@ -358,7 +353,6 @@ static void hook_audioIconViewDidLoad(id self, SEL _cmd) {
     redDot.tag = 19527;
     [elementView addSubview:redDot];
 
-    // 添加 AI 按钮容器
     UIView *stackView = elementView.superview;
     if (!stackView) return;
     if ([stackView viewWithTag:19528]) return;
@@ -406,32 +400,25 @@ static void setupAudioIconElementHook(void) {
     }
 }
 
-// === Hook StackView 布局：移动 AWEBaseElementView 到 x=240 ===
+// === 安全的 StackView 布局 Hook（只移动按钮，不修改容器宽度） ===
 
 static void (*orig_stackViewLayoutSubviews)(id self, SEL _cmd);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     orig_stackViewLayoutSubviews(self, _cmd);
 
     UIView *stackView = (UIView *)self;
+    if (!stackView.window) return;
 
-    // 1) 若存在 AI 按钮容器，更新 AI 按钮位置（保留原功能）
     if ([stackView viewWithTag:19528]) {
         aweca_updateAIButtonPosition(stackView);
     }
 
-    // 2) 移动“更多面板”所在的 AWEBaseElementView 到 x=240
     UIView *moreElementView = findMorePanelElementView(stackView);
     if (moreElementView) {
         CGRect frame = moreElementView.frame;
-        frame.origin.x = 240;
-        moreElementView.frame = frame;
-
-        // 确保 StackView 足够宽，防止裁剪
-        CGFloat neededWidth = frame.origin.x + frame.size.width;
-        if (stackView.frame.size.width < neededWidth) {
-            CGRect svFrame = stackView.frame;
-            svFrame.size.width = neededWidth;
-            stackView.frame = svFrame;
+        if (frame.origin.x != 240) {
+            frame.origin.x = 240;
+            moreElementView.frame = frame;
         }
     }
 }
@@ -458,7 +445,6 @@ static void setupStackViewLayoutHook(void) {
         setupAudioIconElementHook();
         setupStackViewLayoutHook();
 
-        // 保底：1.5 秒后强制移动一次，移动 AWEBaseElementView
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             UIWindow *window = nil;
             for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -474,18 +460,13 @@ static void setupStackViewLayoutHook(void) {
             UIView *stackView = findElementStackView(window);
             if (stackView) {
                 UIView *moreElementView = findMorePanelElementView(stackView);
-                if (moreElementView && moreElementView.frame.origin.x != 240) {
+                if (moreElementView) {
                     CGRect frame = moreElementView.frame;
-                    frame.origin.x = 240;
-                    moreElementView.frame = frame;
-                    // 调整 StackView 宽度
-                    CGFloat neededWidth = frame.origin.x + frame.size.width;
-                    if (stackView.frame.size.width < neededWidth) {
-                        CGRect svFrame = stackView.frame;
-                        svFrame.size.width = neededWidth;
-                        stackView.frame = svFrame;
+                    if (frame.origin.x != 240) {
+                        frame.origin.x = 240;
+                        moreElementView.frame = frame;
+                        NSLog(@"[Tweak] 更多面板已移动到 x=240");
                     }
-                    NSLog(@"[AWECommentAudioTweak] 保底移动：更多面板 -> x=240");
                 }
             }
         });
