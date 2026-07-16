@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（无延迟版）
+// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（稳定无卡顿）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -14,55 +14,29 @@
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
-static UIView *findMorePanelElementView(void);
-static void moveMorePanelButton(void);
+static UIView *findMorePanelElementView(UIView *stackView);
 
-// === 辅助函数：递归查找指定类别的视图 ===
-static void findViewsOfClass(UIView *view, Class cls, NSMutableArray *results) {
-    if ([view isKindOfClass:cls]) {
-        [results addObject:view];
-    }
-    for (UIView *sub in view.subviews) {
-        findViewsOfClass(sub, cls, results);
-    }
-}
+// 关联对象 key，标记每个 StackView 是否已成功移动按钮
+static char kMorePanelMovedKey;
 
-// === 从当前活动窗口中找到包含“更多面板”按钮的 AWEBaseElementView ===
-static UIView *findMorePanelElementView(void) {
-    UIWindow *window = nil;
-    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive) {
-            window = scene.windows.firstObject;
-            break;
-        }
-    }
-    if (!window) window = [UIApplication sharedApplication].delegate.window;
-    if (!window) return nil;
+// === 辅助函数：从 StackView 内查找“更多面板”所在的 AWEBaseElementView ===
+static UIView *findMorePanelElementView(UIView *stackView) {
+    Class evClass = NSClassFromString(@"AWEBaseElementView");
+    if (!evClass) return nil;
 
-    NSMutableArray *allButtons = [NSMutableArray array];
-    findViewsOfClass(window, [UIButton class], allButtons);
-    for (UIButton *btn in allButtons) {
-        if ([btn.accessibilityLabel isEqualToString:@"更多面板"]) {
-            UIView *parent = btn.superview;
-            if ([parent isKindOfClass:NSClassFromString(@"AWEBaseElementView")]) {
-                return parent;
+    for (UIView *sub in stackView.subviews) {
+        if (![sub isKindOfClass:evClass]) continue;
+        for (UIView *child in sub.subviews) {
+            if ([child isKindOfClass:[UIButton class]] &&
+                [child.accessibilityLabel isEqualToString:@"更多面板"]) {
+                return sub;
             }
         }
     }
     return nil;
 }
 
-// === 将按钮移动到 x=240 ===
-static void moveMorePanelButton(void) {
-    UIView *elementView = findMorePanelElementView();
-    if (elementView && elementView.frame.origin.x != 240) {
-        CGRect frame = elementView.frame;
-        frame.origin.x = 240;
-        elementView.frame = frame;
-    }
-}
-
-// ========== 原有所有 Hook 功能（保持不变）==========
+// ========== 所有原有 Hook 功能（保持不变）==========
 
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
@@ -347,16 +321,39 @@ static void setupAudioIconElementHook(void) {
     }
 }
 
-// === 保留 StackView Hook（用于 AI 按钮） ===
+// ========== 核心优化：StackView 布局 Hook（异步移动，无卡顿） ==========
+
 static void (*orig_stackViewLayoutSubviews)(id self, SEL _cmd);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     orig_stackViewLayoutSubviews(self, _cmd);
+
     UIView *stackView = (UIView *)self;
     if (!stackView.window) return;
+
+    // 处理 AI 按钮布局（原有功能）
     if ([stackView viewWithTag:19528]) {
         aweca_updateAIButtonPosition(stackView);
     }
+
+    // 移动“更多面板”按钮：仅当该实例未曾成功移动过，且按钮已存在
+    NSNumber *moved = objc_getAssociatedObject(stackView, &kMorePanelMovedKey);
+    if (![moved boolValue]) {
+        UIView *elementView = findMorePanelElementView(stackView);
+        if (elementView) {
+            // 异步执行，避免干扰当前布局周期，消除卡顿
+            dispatch_async(dispatch_get_main_queue(), ^{
+                CGRect frame = elementView.frame;
+                if (frame.origin.x != 240) {
+                    frame.origin.x = 240;
+                    elementView.frame = frame;
+                }
+            });
+            // 标记已移动（即便异步，也避免后续重复提交任务）
+            objc_setAssociatedObject(stackView, &kMorePanelMovedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
 }
+
 static void setupStackViewLayoutHook(void) {
     Class cls = NSClassFromString(@"AWEElementStackView");
     if (!cls) return;
@@ -368,20 +365,6 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 核心修改：在评论面板出现后移动按钮（无延迟） ==========
-
-%hook AWECommentContainerViewController
-
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-    // 等待 0.2 秒确保内部按钮完全创建
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        moveMorePanelButton();
-    });
-}
-
-%end
-
 // ========== 启动入口 ==========
 
 %ctor {
@@ -392,6 +375,5 @@ static void setupStackViewLayoutHook(void) {
         setupAudioInputElementHook();
         setupAudioIconElementHook();
         setupStackViewLayoutHook();
-        // 不再需要任何定时器
     }
 }
