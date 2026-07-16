@@ -14,6 +14,7 @@
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
+static UIButton *findMorePanelButton(UIView *view);
 
 // === Hook 1: 录完就偷梁换柱 ===
 
@@ -159,6 +160,20 @@ static void setupAudioInputElementHook(void) {
     }
 }
 
+// === 查找“更多面板”按钮（辅助函数）===
+static UIButton *findMorePanelButton(UIView *view) {
+    if ([view isKindOfClass:[UIButton class]]) {
+        if ([view.accessibilityLabel isEqualToString:@"更多面板"]) {
+            return (UIButton *)view;
+        }
+    }
+    for (UIView *sub in view.subviews) {
+        UIButton *found = findMorePanelButton(sub);
+        if (found) return found;
+    }
+    return nil;
+}
+
 // === 重新布局所有工具栏按钮，并固定“更多面板”到 x = 240 ===
 
 static void aweca_updateAIButtonPosition(UIView *stackView) {
@@ -172,16 +187,15 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
     UIView *audioElement = nil;
     for (UIView *sub in stackView.subviews) {
         if (![sub isKindOfClass:evClass]) continue;
-        if ([sub viewWithTag:19527]) { 
-            audioElement = sub; 
-            break; 
+        if ([sub viewWithTag:19527]) {
+            audioElement = sub;
+            break;
         }
     }
 
     if (!audioElement) {
         aiContainer.hidden = YES;
         aiContainer.alpha = 0.0;
-        // 继续执行后续更多面板定位
     }
 
     // 收集所有可见按钮
@@ -190,7 +204,7 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
         if (![sub isKindOfClass:evClass]) continue;
         if (sub.hidden || sub.alpha < 0.01) continue;
         if (sub.frame.size.width == 0) continue;
-        
+
         UIButton *btn = nil;
         for (UIView *child in sub.subviews) {
             if ([child isKindOfClass:[UIButton class]]) {
@@ -198,7 +212,7 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
                 break;
             }
         }
-        
+
         NSString *type = @"unknown";
         if (btn && btn.accessibilityIdentifier) {
             if ([btn.accessibilityIdentifier containsString:@"Image"]) type = @"image";
@@ -210,7 +224,7 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
             type = @"more";
         }
         if (sub == audioElement) type = @"audio";
-        
+
         [buttons addObject:@{@"view": sub, @"type": type, @"originalX": @(sub.frame.origin.x)}];
     }
 
@@ -227,12 +241,12 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
         @"audio": @120,
         @"poi": @200
     };
-    
+
     BOOL hasAudio = NO;
     for (NSDictionary *info in buttons) {
         NSString *type = info[@"type"];
         UIView *view = info[@"view"];
-        
+
         NSNumber *targetX = targetPositions[type];
         if (targetX) {
             CGRect frame = view.frame;
@@ -251,7 +265,7 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
         aiContainer.hidden = YES;
         aiContainer.alpha = 0.0;
     }
-    
+
     UIButton *aiBtn = nil;
     for (UIView *sub in aiContainer.subviews) {
         if ([sub isKindOfClass:[UIButton class]]) {
@@ -266,27 +280,13 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
     }
 
     // === 强制“更多面板”按钮到 x = 240 ===
-    UIButton *moreBtn = nil;
-    for (NSDictionary *info in buttons) {
-        if ([info[@"type"] isEqualToString:@"more"]) {
-            UIView *view = info[@"view"];
-            for (UIView *child in view.subviews) {
-                if ([child isKindOfClass:[UIButton class]] &&
-                    [child.accessibilityLabel isEqualToString:@"更多面板"]) {
-                    moreBtn = (UIButton *)child;
-                    break;
-                }
-            }
-            break;
-        }
-    }
-
+    UIButton *moreBtn = findMorePanelButton(stackView);
     if (moreBtn) {
         CGRect frame = moreBtn.frame;
         frame.origin.x = 240;
         moreBtn.frame = frame;
 
-        // 防止父视图裁剪
+        // 防止父视图裁剪导致消失
         UIView *parent = moreBtn.superview;
         if (parent) {
             CGFloat neededWidth = frame.origin.x + frame.size.width;
@@ -375,7 +375,7 @@ static void hook_audioIconViewDidLoad(id self, SEL _cmd) {
     UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightRegular];
     UIImage *aiIcon = [UIImage systemImageNamed:@"icloud.circle" withConfiguration:cfg];
     [aiBtn setImage:aiIcon forState:UIControlStateNormal];
-    
+
     Class themeMgr = NSClassFromString(@"AWEUIThemeManager");
     BOOL isLight = themeMgr ? [themeMgr isLightTheme] : NO;
     aiBtn.tintColor = isLight ? [UIColor blackColor] : [UIColor whiteColor];
@@ -414,7 +414,7 @@ static void setupAudioIconElementHook(void) {
 static void (*orig_stackViewLayoutSubviews)(id self, SEL _cmd);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     orig_stackViewLayoutSubviews(self, _cmd);
-    
+
     UIView *sv = (UIView *)self;
     if ([sv viewWithTag:19528]) {
         aweca_updateAIButtonPosition(sv);
