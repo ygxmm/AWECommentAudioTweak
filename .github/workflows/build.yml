@@ -5,11 +5,11 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:   # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-latest   # 使用 macOS 环境（Theos 需要 macOS 或 Linux）
+    runs-on: macos-latest
     
     steps:
       - name: Checkout code
@@ -17,14 +17,12 @@ jobs:
 
       - name: Setup Theos
         run: |
-          # 安装 Theos（如果未安装）
-          export THEOS=/opt/theos
+          export THEOS=$HOME/theos
           if [ ! -d "$THEOS" ]; then
             git clone --recursive https://github.com/theos/theos.git $THEOS
           fi
-          # 确保 Theos 环境变量生效
-          echo "THEOS=/opt/theos" >> $GITHUB_ENV
-          echo "$THEOS/bin" >> $GITHUB_PATH
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "$HOME/theos/bin" >> $GITHUB_PATH
 
       - name: Build package
         run: |
