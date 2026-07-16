@@ -15,6 +15,7 @@ static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
+static UIView *findElementStackView(UIView *view);   // 新增辅助函数
 
 // === Hook 1: 录完就偷梁换柱 ===
 
@@ -173,6 +174,18 @@ static UIView *findMorePanelElementView(UIView *stackView) {
                 return sub;
             }
         }
+    }
+    return nil;
+}
+
+// === 递归查找 AWEElementStackView ===
+static UIView *findElementStackView(UIView *view) {
+    if ([view isKindOfClass:NSClassFromString(@"AWEElementStackView")]) {
+        return view;
+    }
+    for (UIView *subview in view.subviews) {
+        UIView *found = findElementStackView(subview);
+        if (found) return found;
     }
     return nil;
 }
@@ -458,19 +471,7 @@ static void setupStackViewLayoutHook(void) {
                 window = [UIApplication sharedApplication].delegate.window;
             }
 
-            // 递归查找 AWEElementStackView
-            __block UIView *stackView = nil;
-            void (^findStackView)(UIView *) = ^(UIView *view) {
-                for (UIView *sub in view.subviews) {
-                    if ([sub isKindOfClass:NSClassFromString(@"AWEElementStackView")]) {
-                        stackView = sub;
-                        return;
-                    }
-                    findStackView(sub);
-                }
-            };
-            findStackView(window);
-
+            UIView *stackView = findElementStackView(window);
             if (stackView) {
                 UIView *moreElementView = findMorePanelElementView(stackView);
                 if (moreElementView && moreElementView.frame.origin.x != 240) {
