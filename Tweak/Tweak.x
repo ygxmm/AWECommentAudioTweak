@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（最终完整可编译版）
+// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（最终可编译版）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -20,7 +20,6 @@ static UIView *findMorePanelElementView(UIView *stackView);
 static UIView *findMorePanelElementView(UIView *stackView) {
     Class evClass = NSClassFromString(@"AWEBaseElementView");
     if (!evClass) return nil;
-
     for (UIView *sub in stackView.subviews) {
         if (![sub isKindOfClass:evClass]) continue;
         for (UIView *child in sub.subviews) {
@@ -103,7 +102,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     }
     %orig;
 }
-- (void)uploadAudioWithFilePath:(id)filePath completion:(id)completion) {
+- (void)uploadAudioWithFilePath:(id)filePath completion:(id)completion {
     if ([AWECAAudioReplacer shared].enabled && filePath) {
         NSString *path = (NSString *)filePath;
         if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
