@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（终极定时器版）
+// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（最终编译通过版）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -14,9 +14,10 @@
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
+static UIView *findMorePanelElementView(void);
 static void moveMorePanelButton(void);
 
-// === 所有原有的 Hook 功能保留，无需修改 ===
+// === Hook 1: 录音后替换音频 ===
 
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
@@ -44,6 +45,8 @@ static void moveMorePanelButton(void);
 }
 %end
 
+// === Hook 2: 播放时缓存 CDN 链接 ===
+
 %hook AWECommentAudioPlayerManager
 - (void)playAudioWithVideoModel:(id)videoModel startTime:(double)startTime audioEffectExternInfo:(id)info {
     if (videoModel && [videoModel isKindOfClass:[NSString class]]) {
@@ -59,6 +62,8 @@ static void moveMorePanelButton(void);
 }
 %end
 
+// === Hook 3: 长按菜单添加保存语音 ===
+
 %hook AWECommentLongPressPanelAdaptar
 - (void)showLongPressPanelWithParam:(id)param config:(id)config showSheetCompletion:(id)showCompletion dismissSheetCompletion:(id)dismissCompletion {
     %orig;
@@ -73,6 +78,8 @@ static void moveMorePanelButton(void);
     });
 }
 %end
+
+// === Hook 5: 上传前再替换音频 ===
 
 %hook AWECommentAudioUploadManager
 - (void)startUploadAudioWithFilePath:(id)filePath {
@@ -104,7 +111,8 @@ static void moveMorePanelButton(void);
 }
 %end
 
-// === 预览气泡 Hook ===
+// === Hook 6: 预览气泡更换音频并修正时长 ===
+
 static void (*orig_generateAudioPreviewBubble)(id, SEL, id);
 static void hook_generateAudioPreviewBubble(id self, SEL _cmd, id recordedModel) {
     if (recordedModel && [AWECAAudioReplacer shared].enabled) {
@@ -131,9 +139,18 @@ static void setupAudioInputElementHook(void) {
     }
 }
 
-// === 查找包含“更多面板”按钮的 AWEBaseElementView ===
+// === 辅助函数：递归查找子视图中的指定类 ===
+static void findViewsOfClass(UIView *view, Class cls, NSMutableArray *results) {
+    if ([view isKindOfClass:cls]) {
+        [results addObject:view];
+    }
+    for (UIView *sub in view.subviews) {
+        findViewsOfClass(sub, cls, results);
+    }
+}
+
+// === 查找包含“更多面板”按钮的 AWEBaseElementView（遍历整个窗口） ===
 static UIView *findMorePanelElementView(void) {
-    // 获取当前活动窗口
     UIWindow *window = nil;
     for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if (scene.activationState == UISceneActivationStateForegroundActive) {
@@ -144,34 +161,20 @@ static UIView *findMorePanelElementView(void) {
     if (!window) window = [UIApplication sharedApplication].delegate.window;
     if (!window) return nil;
 
-    // 递归查找所有子视图，找到 accessLabel = @"更多面板" 的按钮
     NSMutableArray *allButtons = [NSMutableArray array];
-    void (^findButtons)(UIView *) = ^(UIView *view) {
-        if ([view isKindOfClass:[UIButton class]]) {
-            UIButton *btn = (UIButton *)view;
-            if ([btn.accessibilityLabel isEqualToString:@"更多面板"]) {
-                [allButtons addObject:btn];
+    findViewsOfClass(window, [UIButton class], allButtons);
+    for (UIButton *btn in allButtons) {
+        if ([btn.accessibilityLabel isEqualToString:@"更多面板"]) {
+            UIView *parent = btn.superview;
+            if ([parent isKindOfClass:NSClassFromString(@"AWEBaseElementView")]) {
+                return parent;
             }
         }
-        for (UIView *sub in view.subviews) {
-            findButtons(sub);
-        }
-    };
-    findButtons(window);
-
-    if (allButtons.count == 0) return nil;
-
-    // 返回第一个符合条件的按钮的父视图（AWEBaseElementView）
-    UIButton *targetBtn = allButtons.firstObject;
-    UIView *parent = targetBtn.superview;
-    // 确认父视图是否是 AWEBaseElementView
-    if ([parent isKindOfClass:NSClassFromString(@"AWEBaseElementView")]) {
-        return parent;
     }
     return nil;
 }
 
-// === 移动按钮的实际操作 ===
+// === 移动按钮 ===
 static void moveMorePanelButton(void) {
     UIView *elementView = findMorePanelElementView();
     if (elementView && elementView.frame.origin.x != 240) {
@@ -181,17 +184,177 @@ static void moveMorePanelButton(void) {
     }
 }
 
-// === 原有的 AI 按钮、语音布局更新函数（保持不变） ===
+// === 原有的 AI 按钮、语音布局更新函数（完整保留） ===
 static void aweca_updateAIButtonPosition(UIView *stackView) {
-    // ... 与之前版本完全相同，此处省略以节省篇幅，但实际代码中必须保留 ...
-}
-static void aweca_aiButtonTappedIMP(id self, SEL _cmd) { /* ... 保持不变 ... */ }
-static void aweca_longPressAudioIconIMP(id self, SEL _cmd, UILongPressGestureRecognizer *gesture) { /* ... */ }
-static void (*orig_audioIconViewDidLoad)(id self, SEL _cmd);
-static void hook_audioIconViewDidLoad(id self, SEL _cmd) { /* ... */ }
-static void setupAudioIconElementHook(void) { /* ... */ }
+    UIView *aiContainer = [stackView viewWithTag:19528];
+    if (!aiContainer) return;
+    Class evClass = NSClassFromString(@"AWEBaseElementView");
+    if (!evClass) return;
 
-// === 保留原有的 StackView Hook（用于 AI 按钮） ===
+    UIView *audioElement = nil;
+    for (UIView *sub in stackView.subviews) {
+        if (![sub isKindOfClass:evClass]) continue;
+        if ([sub viewWithTag:19527]) { audioElement = sub; break; }
+    }
+    if (!audioElement) {
+        aiContainer.hidden = YES;
+        aiContainer.alpha = 0.0;
+    }
+
+    NSMutableArray *buttons = [NSMutableArray array];
+    for (UIView *sub in stackView.subviews) {
+        if (![sub isKindOfClass:evClass]) continue;
+        if (sub.hidden || sub.alpha < 0.01) continue;
+        if (sub.frame.size.width == 0) continue;
+        UIButton *btn = nil;
+        for (UIView *child in sub.subviews) {
+            if ([child isKindOfClass:[UIButton class]]) { btn = (UIButton *)child; break; }
+        }
+        NSString *type = @"unknown";
+        if (btn && btn.accessibilityIdentifier) {
+            if ([btn.accessibilityIdentifier containsString:@"Image"]) type = @"image";
+            else if ([btn.accessibilityIdentifier containsString:@"At"]) type = @"at";
+            else if ([btn.accessibilityIdentifier containsString:@"Emoji"]) type = @"emoji";
+            else if ([btn.accessibilityIdentifier containsString:@"Poi"]) type = @"poi";
+        }
+        if (btn && [btn.accessibilityLabel isEqualToString:@"更多面板"]) type = @"more";
+        if (sub == audioElement) type = @"audio";
+        [buttons addObject:@{@"view": sub, @"type": type, @"originalX": @(sub.frame.origin.x)}];
+    }
+    [buttons sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        return [a[@"originalX"] compare:b[@"originalX"]];
+    }];
+    NSDictionary *targetPositions = @{
+        @"image": @0, @"at": @40, @"emoji": @80, @"audio": @120, @"poi": @200
+    };
+    BOOL hasAudio = NO;
+    for (NSDictionary *info in buttons) {
+        NSString *type = info[@"type"];
+        UIView *view = info[@"view"];
+        NSNumber *targetX = targetPositions[type];
+        if (targetX) {
+            CGRect frame = view.frame;
+            frame.origin.x = [targetX floatValue];
+            view.frame = frame;
+            if ([type isEqualToString:@"audio"]) hasAudio = YES;
+        }
+    }
+    if (hasAudio && audioElement) {
+        aiContainer.frame = CGRectMake(160, 0, 24, 24);
+        aiContainer.hidden = NO;
+        aiContainer.alpha = 1.0;
+    } else {
+        aiContainer.hidden = YES;
+        aiContainer.alpha = 0.0;
+    }
+    UIButton *aiBtn = nil;
+    for (UIView *sub in aiContainer.subviews) {
+        if ([sub isKindOfClass:[UIButton class]]) { aiBtn = (UIButton *)sub; break; }
+    }
+    if (aiBtn) {
+        Class themeMgr = NSClassFromString(@"AWEUIThemeManager");
+        BOOL isLight = themeMgr ? [themeMgr isLightTheme] : NO;
+        aiBtn.tintColor = isLight ? [UIColor blackColor] : [UIColor whiteColor];
+    }
+}
+
+static void aweca_aiButtonTappedIMP(id self, SEL _cmd) {
+    UIViewController *vc = [AWECAUtils topViewController];
+    AWECATTSController *tts = [[AWECATTSController alloc] init];
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:tts];
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    if (@available(iOS 16.0, *)) {
+        UISheetPresentationController *sheet = nav.sheetPresentationController;
+        if (sheet) {
+            UISheetPresentationControllerDetent *fit = [UISheetPresentationControllerDetent
+                customDetentWithIdentifier:@"ttsCompact"
+                resolver:^CGFloat(id<UISheetPresentationControllerDetentResolutionContext> ctx) { return 256; }];
+            sheet.detents = @[fit, UISheetPresentationControllerDetent.largeDetent];
+            sheet.selectedDetentIdentifier = @"ttsCompact";
+            sheet.prefersGrabberVisible = YES;
+        }
+    } else if (@available(iOS 15.0, *)) {
+        UISheetPresentationController *sheet = nav.sheetPresentationController;
+        if (sheet) {
+            sheet.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
+            sheet.prefersGrabberVisible = YES;
+        }
+    }
+    [vc presentViewController:nav animated:YES completion:nil];
+}
+
+static void aweca_longPressAudioIconIMP(id self, SEL _cmd, UILongPressGestureRecognizer *gesture) {
+    if (gesture.state != UIGestureRecognizerStateBegan) return;
+    UIViewController *vc = [AWECAUtils topViewController];
+    [[AWECAAudioPickerController shared] showPickerFromViewController:vc];
+}
+
+static void (*orig_audioIconViewDidLoad)(id self, SEL _cmd);
+static void hook_audioIconViewDidLoad(id self, SEL _cmd) {
+    orig_audioIconViewDidLoad(self, _cmd);
+    UIView *elementView = nil;
+    if ([self respondsToSelector:@selector(view)]) {
+        elementView = [self performSelector:@selector(view)];
+    }
+    if (!elementView) return;
+    elementView.userInteractionEnabled = YES;
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:elementView action:@selector(aweca_longPressAudioIcon:)];
+    lp.minimumPressDuration = 0.5;
+    [elementView addGestureRecognizer:lp];
+
+    UIView *redDot = [[UIView alloc] initWithFrame:CGRectMake(elementView.bounds.size.width - 8, 2, 6, 6)];
+    redDot.backgroundColor = [UIColor redColor];
+    redDot.layer.cornerRadius = 3;
+    redDot.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    redDot.hidden = ![AWECAAudioReplacer shared].enabled;
+    redDot.tag = 19527;
+    [elementView addSubview:redDot];
+
+    UIView *stackView = elementView.superview;
+    if (!stackView) return;
+    if ([stackView viewWithTag:19528]) return;
+
+    UIView *aiContainer = [[UIView alloc] initWithFrame:CGRectZero];
+    aiContainer.tag = 19528;
+    aiContainer.userInteractionEnabled = YES;
+    [stackView addSubview:aiContainer];
+
+    UIButton *aiBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightRegular];
+    UIImage *aiIcon = [UIImage systemImageNamed:@"icloud.circle" withConfiguration:cfg];
+    [aiBtn setImage:aiIcon forState:UIControlStateNormal];
+    Class themeMgr = NSClassFromString(@"AWEUIThemeManager");
+    BOOL isLight = themeMgr ? [themeMgr isLightTheme] : NO;
+    aiBtn.tintColor = isLight ? [UIColor blackColor] : [UIColor whiteColor];
+    aiBtn.frame = CGRectMake(0, 0, 24, 24);
+    [aiBtn addTarget:stackView action:@selector(aweca_aiButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+    [aiContainer addSubview:aiBtn];
+}
+
+static void setupAudioIconElementHook(void) {
+    Class cls = NSClassFromString(@"AWECommentInputViewSwiftImpl.CommentAudioIconElement");
+    if (!cls) return;
+    SEL sel = @selector(viewDidLoad);
+    Method method = class_getInstanceMethod(cls, sel);
+    if (method) {
+        orig_audioIconViewDidLoad = (void (*)(id, SEL))method_getImplementation(method);
+        method_setImplementation(method, (IMP)hook_audioIconViewDidLoad);
+    }
+    Class viewClass = NSClassFromString(@"AWEBaseElementView");
+    if (!viewClass) viewClass = [UIView class];
+    SEL lpSel = @selector(aweca_longPressAudioIcon:);
+    if (!class_respondsToSelector(viewClass, lpSel)) {
+        class_addMethod(viewClass, lpSel, (IMP)aweca_longPressAudioIconIMP, "v@:@");
+    }
+    Class stackClass = NSClassFromString(@"AWEElementStackView");
+    if (!stackClass) stackClass = [UIView class];
+    SEL aiSel = @selector(aweca_aiButtonTapped);
+    if (!class_respondsToSelector(stackClass, aiSel)) {
+        class_addMethod(stackClass, aiSel, (IMP)aweca_aiButtonTappedIMP, "v@:");
+    }
+}
+
+// === 保留 StackView Hook（用于 AI 按钮） ===
 static void (*orig_stackViewLayoutSubviews)(id self, SEL _cmd);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     orig_stackViewLayoutSubviews(self, _cmd);
@@ -200,7 +363,6 @@ static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     if ([stackView viewWithTag:19528]) {
         aweca_updateAIButtonPosition(stackView);
     }
-    // 注意：我们不在这里移动“更多面板”，因为定时器会处理
 }
 static void setupStackViewLayoutHook(void) {
     Class cls = NSClassFromString(@"AWEElementStackView");
@@ -213,7 +375,7 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// === 启动入口：启动定时器 + 原有初始化 ===
+// === 启动入口 ===
 %ctor {
     @autoreleasepool {
         [AWECAUtils ensureDirectoriesExist];
@@ -223,7 +385,7 @@ static void setupStackViewLayoutHook(void) {
         setupAudioIconElementHook();
         setupStackViewLayoutHook();
 
-        // 终极方案：全局定时器，每 0.5 秒移动一次按钮（极低性能开销）
+        // 全局定时器，每 0.5 秒确保“更多面板”按钮在 x=240
         [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *timer) {
             moveMorePanelButton();
         }];
