@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮位置固定到 x=240
+// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -447,8 +447,18 @@ static void setupStackViewLayoutHook(void) {
 
         // 保底：1.5 秒后强制移动一次，防止布局尚未完成
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIWindow *window = [UIApplication sharedApplication].keyWindow;
-            if (!window) window = [UIApplication sharedApplication].windows.firstObject;
+            UIWindow *window = nil;
+            // 遍历所有场景获取当前活动窗口，兼容 iOS 13+
+            for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if (scene.activationState == UISceneActivationStateForegroundActive) {
+                    window = scene.windows.firstObject;
+                    break;
+                }
+            }
+            // 如果仍然没有找到，回退到 AppDelegate 的 window
+            if (!window) {
+                window = [UIApplication sharedApplication].delegate.window;
+            }
             UIButton *btn = findMorePanelButton(window);
             if (btn) {
                 CGRect f = btn.frame;
