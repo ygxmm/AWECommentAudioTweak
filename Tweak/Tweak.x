@@ -457,8 +457,9 @@ static void setupStackViewLayoutHook(void) {
             if (!window) {
                 window = [UIApplication sharedApplication].delegate.window;
             }
+
             // 递归查找 AWEElementStackView
-            UIView *stackView = nil;
+            __block UIView *stackView = nil;
             void (^findStackView)(UIView *) = ^(UIView *view) {
                 for (UIView *sub in view.subviews) {
                     if ([sub isKindOfClass:NSClassFromString(@"AWEElementStackView")]) {
