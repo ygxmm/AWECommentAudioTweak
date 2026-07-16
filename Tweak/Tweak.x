@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮位置自定义
+// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮位置固定到 x=240
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -174,7 +174,7 @@ static UIButton *findMorePanelButton(UIView *view) {
     return nil;
 }
 
-// === 重新布局所有工具栏按钮，并固定“更多面板”到 x = 240 ===
+// === 重新布局其他工具栏按钮（AI 按钮、语音等），但不影响“更多面板”移动 ===
 
 static void aweca_updateAIButtonPosition(UIView *stackView) {
     UIView *aiContainer = [stackView viewWithTag:19528];
@@ -277,25 +277,6 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
         Class themeMgr = NSClassFromString(@"AWEUIThemeManager");
         BOOL isLight = themeMgr ? [themeMgr isLightTheme] : NO;
         aiBtn.tintColor = isLight ? [UIColor blackColor] : [UIColor whiteColor];
-    }
-
-    // === 强制“更多面板”按钮到 x = 240 ===
-    UIButton *moreBtn = findMorePanelButton(stackView);
-    if (moreBtn) {
-        CGRect frame = moreBtn.frame;
-        frame.origin.x = 240;
-        moreBtn.frame = frame;
-
-        // 防止父视图裁剪导致消失
-        UIView *parent = moreBtn.superview;
-        if (parent) {
-            CGFloat neededWidth = frame.origin.x + frame.size.width;
-            if (parent.frame.size.width < neededWidth) {
-                CGRect pFrame = parent.frame;
-                pFrame.size.width = neededWidth;
-                parent.frame = pFrame;
-            }
-        }
     }
 }
 
@@ -409,15 +390,36 @@ static void setupAudioIconElementHook(void) {
     }
 }
 
-// === Hook StackView 布局以更新按钮位置 ===
+// === Hook StackView 布局：核心：无条件移动“更多面板”按钮到 x=240 ===
 
 static void (*orig_stackViewLayoutSubviews)(id self, SEL _cmd);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     orig_stackViewLayoutSubviews(self, _cmd);
 
-    UIView *sv = (UIView *)self;
-    if ([sv viewWithTag:19528]) {
-        aweca_updateAIButtonPosition(sv);
+    UIView *stackView = (UIView *)self;
+
+    // 1) 如果存在 AI 按钮容器，则更新 AI 按钮位置（保留原功能）
+    if ([stackView viewWithTag:19528]) {
+        aweca_updateAIButtonPosition(stackView);
+    }
+
+    // 2) 无条件移动原生“更多面板”按钮到 x=240
+    UIButton *moreBtn = findMorePanelButton(stackView);
+    if (moreBtn) {
+        CGRect frame = moreBtn.frame;
+        frame.origin.x = 240;
+        moreBtn.frame = frame;
+
+        // 防止父视图裁剪导致消失
+        UIView *parent = moreBtn.superview;
+        if (parent) {
+            CGFloat neededWidth = frame.origin.x + frame.size.width;
+            if (parent.frame.size.width < neededWidth) {
+                CGRect pFrame = parent.frame;
+                pFrame.size.width = neededWidth;
+                parent.frame = pFrame;
+            }
+        }
     }
 }
 
@@ -442,5 +444,18 @@ static void setupStackViewLayoutHook(void) {
         setupAudioInputElementHook();
         setupAudioIconElementHook();
         setupStackViewLayoutHook();
+
+        // 保底：1.5 秒后强制移动一次，防止布局尚未完成
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIWindow *window = [UIApplication sharedApplication].keyWindow;
+            if (!window) window = [UIApplication sharedApplication].windows.firstObject;
+            UIButton *btn = findMorePanelButton(window);
+            if (btn) {
+                CGRect f = btn.frame;
+                f.origin.x = 240;
+                btn.frame = f;
+                NSLog(@"[AWECommentAudioTweak] 保底移动：更多面板 -> x=240");
+            }
+        });
     }
 }
