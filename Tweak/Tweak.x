@@ -14,7 +14,7 @@
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
-static UIButton *findMorePanelButton(UIView *view);
+static UIView *findMorePanelElementView(UIView *stackView);
 
 // === Hook 1: 录完就偷梁换柱 ===
 
@@ -160,16 +160,19 @@ static void setupAudioInputElementHook(void) {
     }
 }
 
-// === 查找“更多面板”按钮（辅助函数）===
-static UIButton *findMorePanelButton(UIView *view) {
-    if ([view isKindOfClass:[UIButton class]]) {
-        if ([view.accessibilityLabel isEqualToString:@"更多面板"]) {
-            return (UIButton *)view;
+// === 查找“更多面板”所在的 AWEBaseElementView（辅助函数）===
+static UIView *findMorePanelElementView(UIView *stackView) {
+    Class evClass = NSClassFromString(@"AWEBaseElementView");
+    if (!evClass) return nil;
+
+    for (UIView *sub in stackView.subviews) {
+        if (![sub isKindOfClass:evClass]) continue;
+        for (UIView *child in sub.subviews) {
+            if ([child isKindOfClass:[UIButton class]] &&
+                [child.accessibilityLabel isEqualToString:@"更多面板"]) {
+                return sub;
+            }
         }
-    }
-    for (UIView *sub in view.subviews) {
-        UIButton *found = findMorePanelButton(sub);
-        if (found) return found;
     }
     return nil;
 }
@@ -390,7 +393,7 @@ static void setupAudioIconElementHook(void) {
     }
 }
 
-// === Hook StackView 布局：核心：无条件移动“更多面板”按钮到 x=240 ===
+// === Hook StackView 布局：移动 AWEBaseElementView 到 x=240 ===
 
 static void (*orig_stackViewLayoutSubviews)(id self, SEL _cmd);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
@@ -398,27 +401,24 @@ static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
 
     UIView *stackView = (UIView *)self;
 
-    // 1) 如果存在 AI 按钮容器，则更新 AI 按钮位置（保留原功能）
+    // 1) 若存在 AI 按钮容器，更新 AI 按钮位置（保留原功能）
     if ([stackView viewWithTag:19528]) {
         aweca_updateAIButtonPosition(stackView);
     }
 
-    // 2) 无条件移动原生“更多面板”按钮到 x=240
-    UIButton *moreBtn = findMorePanelButton(stackView);
-    if (moreBtn) {
-        CGRect frame = moreBtn.frame;
+    // 2) 移动“更多面板”所在的 AWEBaseElementView 到 x=240
+    UIView *moreElementView = findMorePanelElementView(stackView);
+    if (moreElementView) {
+        CGRect frame = moreElementView.frame;
         frame.origin.x = 240;
-        moreBtn.frame = frame;
+        moreElementView.frame = frame;
 
-        // 防止父视图裁剪导致消失
-        UIView *parent = moreBtn.superview;
-        if (parent) {
-            CGFloat neededWidth = frame.origin.x + frame.size.width;
-            if (parent.frame.size.width < neededWidth) {
-                CGRect pFrame = parent.frame;
-                pFrame.size.width = neededWidth;
-                parent.frame = pFrame;
-            }
+        // 确保 StackView 足够宽，防止裁剪
+        CGFloat neededWidth = frame.origin.x + frame.size.width;
+        if (stackView.frame.size.width < neededWidth) {
+            CGRect svFrame = stackView.frame;
+            svFrame.size.width = neededWidth;
+            stackView.frame = svFrame;
         }
     }
 }
@@ -445,26 +445,46 @@ static void setupStackViewLayoutHook(void) {
         setupAudioIconElementHook();
         setupStackViewLayoutHook();
 
-        // 保底：1.5 秒后强制移动一次，防止布局尚未完成
+        // 保底：1.5 秒后强制移动一次，移动 AWEBaseElementView
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             UIWindow *window = nil;
-            // 遍历所有场景获取当前活动窗口，兼容 iOS 13+
             for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
                 if (scene.activationState == UISceneActivationStateForegroundActive) {
                     window = scene.windows.firstObject;
                     break;
                 }
             }
-            // 如果仍然没有找到，回退到 AppDelegate 的 window
             if (!window) {
                 window = [UIApplication sharedApplication].delegate.window;
             }
-            UIButton *btn = findMorePanelButton(window);
-            if (btn) {
-                CGRect f = btn.frame;
-                f.origin.x = 240;
-                btn.frame = f;
-                NSLog(@"[AWECommentAudioTweak] 保底移动：更多面板 -> x=240");
+            // 递归查找 AWEElementStackView
+            UIView *stackView = nil;
+            void (^findStackView)(UIView *) = ^(UIView *view) {
+                for (UIView *sub in view.subviews) {
+                    if ([sub isKindOfClass:NSClassFromString(@"AWEElementStackView")]) {
+                        stackView = sub;
+                        return;
+                    }
+                    findStackView(sub);
+                }
+            };
+            findStackView(window);
+
+            if (stackView) {
+                UIView *moreElementView = findMorePanelElementView(stackView);
+                if (moreElementView && moreElementView.frame.origin.x != 240) {
+                    CGRect frame = moreElementView.frame;
+                    frame.origin.x = 240;
+                    moreElementView.frame = frame;
+                    // 调整 StackView 宽度
+                    CGFloat neededWidth = frame.origin.x + frame.size.width;
+                    if (stackView.frame.size.width < neededWidth) {
+                        CGRect svFrame = stackView.frame;
+                        svFrame.size.width = neededWidth;
+                        stackView.frame = svFrame;
+                    }
+                    NSLog(@"[AWECommentAudioTweak] 保底移动：更多面板 -> x=240");
+                }
             }
         });
     }
