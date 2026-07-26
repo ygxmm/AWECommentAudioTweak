@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 评论区 + 私信语音替换 + 更多面板固定在 x=240 (终极版)
+// AWECommentAudioTweak - 全功能最终版（含私信长按菜单下载 & 设置）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -21,6 +21,10 @@
 @end
 
 @interface AWEIMFormatAudioRecordController : NSObject
+@end
+
+@interface AWEIMAudioMessage : AWEIMMessage
+@property (nonatomic, strong) AWEIMMessageContent<AWEIMMessageAudioContentProtocol> *content;
 @end
 
 // 前置声明
@@ -54,7 +58,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// ========== 评论区：录音后替换音频 ==========
+// ========== 评论区功能（保持不变） ==========
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
@@ -74,7 +78,6 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 评论区：播放时缓存 CDN 链接 ==========
 %hook AWECommentAudioPlayerManager
 - (void)playAudioWithVideoModel:(id)videoModel startTime:(double)startTime audioEffectExternInfo:(id)info {
     if (videoModel && [videoModel isKindOfClass:[NSString class]])
@@ -88,7 +91,6 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 评论区：长按菜单添加保存语音 ==========
 %hook AWECommentLongPressPanelAdaptar
 - (void)showLongPressPanelWithParam:(id)param config:(id)config showSheetCompletion:(id)showCompletion dismissSheetCompletion:(id)dismissCompletion {
     %orig;
@@ -100,7 +102,6 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 评论区：上传前替换音频 ==========
 %hook AWECommentAudioUploadManager
 - (void)startUploadAudioWithFilePath:(id)filePath {
     if ([AWECAAudioReplacer shared].enabled && filePath && [[NSFileManager defaultManager] fileExistsAtPath:(NSString *)filePath])
@@ -119,7 +120,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 评论区：预览气泡替换音频 ==========
+// 评论区：预览气泡替换音频
 static void (*orig_generateAudioPreviewBubble)(id, SEL, id);
 static void hook_generateAudioPreviewBubble(id self, SEL _cmd, id recordedModel) {
     if (recordedModel && [AWECAAudioReplacer shared].enabled) {
@@ -144,7 +145,7 @@ static void setupAudioInputElementHook(void) {
     }
 }
 
-// ========== 评论区：AI 按钮布局更新 ==========
+// AI 按钮布局更新
 static void aweca_updateAIButtonPosition(UIView *stackView) {
     UIView *aiContainer = [stackView viewWithTag:19528];
     if (!aiContainer) return;
@@ -270,7 +271,7 @@ static void setupAudioIconElementHook(void) {
         class_addMethod(stackClass, @selector(aweca_aiButtonTapped), (IMP)aweca_aiButtonTappedIMP, "v@:");
 }
 
-// ========== 评论区：StackView 布局 Hook ==========
+// StackView 布局 Hook
 static void (*orig_stackViewLayoutSubviews)(id, SEL);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     orig_stackViewLayoutSubviews(self, _cmd);
@@ -291,8 +292,7 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 私信语音替换（终极修复：直接调用 setCurrentTime:） ==========
-
+// ========== 私信语音时长修正（已成功） ==========
 %hook AWEIMAudioRecordController
 
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
@@ -302,10 +302,7 @@ static void setupStackViewLayoutHook(void) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:filePath];
             double realSec = realAudioDuration(filePath);
             if (realSec > 0) {
-                // 1. 直接修改 recorder (AWEIMAudioMessageRecorder) 的 currentTime
                 @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
-                
-                // 2. 获取内层引擎并调用 setCurrentTime: 方法
                 id engineRecorder = [recorder valueForKey:@"recorder"];
                 if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
                     AWEIMAudioEnginRecorder *engine = (AWEIMAudioEnginRecorder *)engineRecorder;
@@ -325,9 +322,7 @@ static void setupStackViewLayoutHook(void) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
             double realSec = realAudioDuration(path);
             if (realSec > 0) {
-                // 发送前再次确保时长正确
                 @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
-                
                 id engineRecorder = [recorder valueForKey:@"recorder"];
                 if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
                     AWEIMAudioEnginRecorder *engine = (AWEIMAudioEnginRecorder *)engineRecorder;
@@ -338,7 +333,6 @@ static void setupStackViewLayoutHook(void) {
     }
     return %orig;
 }
-
 %end
 
 %hook AWEIMFormatAudioRecordController
@@ -381,10 +375,99 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
+// ========== 私信长按菜单：下载 & 设置 ==========
+
+// 获取菜单关联的消息对象
+static AWEIMAudioMessage *getAudioMessageFromMenuView(UIView *menuView) {
+    UIView *cell = menuView.superview;
+    while (cell && ![cell isKindOfClass:[UITableViewCell class]] && ![cell isKindOfClass:[UICollectionViewCell class]]) {
+        cell = cell.superview;
+    }
+    if (!cell) return nil;
+
+    // 从 Cell 中取出消息模型（通常挂载在 message 属性上）
+    id message = [cell valueForKey:@"message"];
+    if ([message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+        return (AWEIMAudioMessage *)message;
+    }
+    return nil;
+}
+
+// 下载按钮回调
+static void aweca_downloadVoiceFromMenuIMP(id self, SEL _cmd) {
+    AWEIMAudioMessage *audioMsg = getAudioMessageFromMenuView((UIView *)self);
+    if (!audioMsg) {
+        [AWECAUtils showToast:@"未找到语音消息"];
+        return;
+    }
+
+    // 获取 resourceUrl 中的 URL 字符串
+    id resourceUrl = [audioMsg.content valueForKey:@"resourceUrl"];
+    NSString *urlString = [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
+    if (!urlString.length) {
+        [AWECAUtils showToast:@"音频链接获取失败"];
+        return;
+    }
+
+    // 调用下载管理器（和评论区相同）
+    // 注意：评论区下载方法原本接收 AWECommentModel，这里我们传入一个临时构造的字典
+    NSDictionary *tempModel = @{@"audioURL": urlString};
+    [[AWECADownloadManager shared] showSaveDialogAndDownload:tempModel];
+}
+
+// 设置按钮回调
+static void aweca_voiceSettingsFromMenuIMP(id self, SEL _cmd) {
+    UIViewController *vc = [AWECAUtils topViewController];
+    [[AWECAAudioPickerController shared] showPickerFromViewController:vc];
+}
+
+%hook AWEIMEmojiReplyMenuView
+
+- (void)layoutSubviews {
+    %orig;
+    if (self.hidden) return;
+    if ([self viewWithTag:30001]) return; // 避免重复添加
+
+    CGFloat menuH = self.bounds.size.height;
+
+    UIButton *downloadBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    downloadBtn.tag = 30001;
+    downloadBtn.frame = CGRectMake(16, menuH - 100, self.bounds.size.width - 32, 44);
+    [downloadBtn setTitle:@"📥 下载语音" forState:UIControlStateNormal];
+    downloadBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
+    downloadBtn.layer.cornerRadius = 10;
+    downloadBtn.tintColor = [UIColor whiteColor];
+    [downloadBtn addTarget:self action:@selector(aweca_downloadVoiceFromMenu) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:downloadBtn];
+
+    UIButton *settingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    settingsBtn.tag = 30002;
+    settingsBtn.frame = CGRectMake(16, menuH - 50, self.bounds.size.width - 32, 44);
+    [settingsBtn setTitle:@"⚙️ 语音设置" forState:UIControlStateNormal];
+    settingsBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
+    settingsBtn.layer.cornerRadius = 10;
+    settingsBtn.tintColor = [UIColor whiteColor];
+    [settingsBtn addTarget:self action:@selector(aweca_voiceSettingsFromMenu) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:settingsBtn];
+}
+
+%end
+
+// 动态方法注入
 %ctor {
     [AWECAUtils ensureDirectoriesExist];
     [AWECAAudioReplacer shared];
     setupAudioInputElementHook();
     setupAudioIconElementHook();
     setupStackViewLayoutHook();
+
+    Class menuClass = NSClassFromString(@"AWEIMEmojiReplyMenuView");
+    if (menuClass) {
+        if (!class_respondsToSelector(menuClass, @selector(aweca_downloadVoiceFromMenu))) {
+            class_addMethod(menuClass, @selector(aweca_downloadVoiceFromMenu), (IMP)aweca_downloadVoiceFromMenuIMP, "v@:");
+        }
+        if (!class_respondsToSelector(menuClass, @selector(aweca_voiceSettingsFromMenu))) {
+            class_addMethod(menuClass, @selector(aweca_voiceSettingsFromMenu), (IMP)aweca_voiceSettingsFromMenuIMP, "v@:");
+        }
+    }
 }
