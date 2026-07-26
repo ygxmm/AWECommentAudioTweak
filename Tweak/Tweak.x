@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（修复普通长按无下载问题）
+// AWECommentAudioTweak - 全功能最终版（修复下载失败问题）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -70,29 +70,46 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// 从菜单视图链向上查找 Cell，获取消息对象
+// 增强版消息查找：从菜单视图向上找 Cell，尝试多种方式获取消息对象
 static id getMessageFromMenuView(UIView *menuView) {
-    UIView *cell = menuView;
-    while (cell) {
-        if ([cell isKindOfClass:NSClassFromString(@"AWEIMReusableCommonCell")] ||
-            [cell isKindOfClass:[UITableViewCell class]]) {
+    UIView *current = menuView;
+    while (current) {
+        // 找到 Cell（可能是 AWEIMReusableCommonCell 或普通 UITableViewCell）
+        if ([current isKindOfClass:NSClassFromString(@"AWEIMReusableCommonCell")] ||
+            [current isKindOfClass:[UITableViewCell class]]) {
             break;
         }
-        cell = cell.superview;
+        current = current.superview;
     }
-    if (!cell) return nil;
+    if (!current) return nil;
 
-    // 尝试通过 message 属性获取
-    id message = [cell valueForKey:@"message"];
-    if (message) return message;
+    // 方式1：直接从 Cell 的 message 属性获取
+    id message = [current valueForKey:@"message"];
+    if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+        return message;
+    }
 
-    // 尝试通过 currentContext 获取
-    id context = [cell valueForKey:@"currentContext"];
+    // 方式2：从 currentContext.message 获取
+    id context = [current valueForKey:@"currentContext"];
     if (context) {
         message = [context valueForKey:@"message"];
-        if (message) return message;
+        if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+            return message;
+        }
     }
 
+    // 方式3：遍历 viewMaps 字典寻找 AWEIMAudioMessage
+    id viewMaps = [current valueForKey:@"viewMaps"];
+    if (viewMaps && [viewMaps respondsToSelector:@selector(allValues)]) {
+        for (id obj in [viewMaps allValues]) {
+            if ([obj isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+                return obj;
+            }
+        }
+    }
+
+    // 方式4：遍历 Cell 的所有子视图，尝试从 UI 组件中回溯
+    // （这种情况较少见，但可兜底）
     return nil;
 }
 
@@ -424,18 +441,18 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 私信原生菜单注入（修复普通长按问题） ==========
+// ========== 私信原生菜单注入（修复下载失败） ==========
 
 static void doDownloadVoice(id menuView) {
     id message = getMessageFromMenuView((UIView *)menuView);
     if (!message) {
-        [AWECAUtils showToast:@"无法获取消息"];
+        [AWECAUtils showToast:@"无法获取消息对象，请尝试转文字后下载"];
         return;
     }
 
     NSString *audioURL = extractAudioURLFromMessage(message);
     if (!audioURL.length) {
-        [AWECAUtils showToast:@"无法获取音频链接"];
+        [AWECAUtils showToast:@"无法获取音频链接，请尝试播放后再下载"];
         return;
     }
 
