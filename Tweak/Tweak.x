@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（私信+群聊下载 & 设置，编译修复）
+// AWECommentAudioTweak - 全功能最终版（原生风格菜单项，精确复刻）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -93,7 +93,7 @@ static NSString *extractAudioURLFromMessage(id message) {
     return [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
 }
 
-// 从 Cell 中尝试提取消息对象（扩展多种可能属性名）
+// 从 Cell 中尝试提取消息对象
 static id extractMessageFromCell(UIView *cell) {
     if (!cell) return nil;
     NSArray *keys = @[@"message", @"item", @"model", @"data", @"viewModel", @"audioMessage", @"voiceMessage", @"chatMessage"];
@@ -120,7 +120,7 @@ static id extractMessageFromCell(UIView *cell) {
     return nil;
 }
 
-// 增强版消息查找，支持 UITableView 和 UICollectionView
+// 增强版消息查找
 static id getMessageFromMenuView(UIView *menuView) {
     UIView *current = menuView;
     while (current) {
@@ -476,7 +476,7 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 私信菜单注入 ==========
+// ========== 私信菜单注入（原生尺寸，修改现有 Cell 的图标和文字） ==========
 %hook AWEIMEmojiReplyMenuView
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
@@ -490,18 +490,24 @@ static void setupStackViewLayoutHook(void) {
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
         cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+        
+        // 遍历 Cell 内的子视图，找到原生的 UIImageView 和 UILabel 并修改它们
         for (UIView *sub in cell.subviews) {
             for (UIView *inner in sub.subviews) {
                 if ([inner isKindOfClass:[UIImageView class]]) {
                     UIImageView *imageView = (UIImageView *)inner;
-                    UIImage *icon = (indexPath.item == originalCount) ? [UIImage systemImageNamed:@"arrow.down.circle"]
-                                                                      : [UIImage systemImageNamed:@"gearshape"];
-                    if (icon) imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+                    imageView.frame = CGRectMake(13, 8, 24, 24); // 与你提供的原生尺寸一致
+                    NSString *iconName = (indexPath.item == originalCount) ? @"arrow.down.circle" : @"gearshape";
+                    UIImage *icon = [UIImage systemImageNamed:iconName];
+                    imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
                 }
                 if ([inner isKindOfClass:[UILabel class]]) {
                     UILabel *label = (UILabel *)inner;
+                    label.frame = CGRectMake(0, 36, 50, 15); // 与你提供的原生尺寸一致
+                    label.font = [UIFont systemFontOfSize:12]; // 原生 12pt
                     label.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
                     label.text = (indexPath.item == originalCount) ? @"下载" : @"设置";
+                    label.textAlignment = NSTextAlignmentCenter;
                     cell.accessibilityLabel = label.text;
                 }
             }
@@ -513,18 +519,15 @@ static void setupStackViewLayoutHook(void) {
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
-        if (indexPath.item == originalCount) {
-            doDownloadVoiceFromMenu(self);
-        } else {
-            doVoiceSettings(self);
-        }
+        if (indexPath.item == originalCount) doDownloadVoiceFromMenu(self);
+        else doVoiceSettings(self);
         return;
     }
     %orig;
 }
 %end
 
-// ========== 群聊菜单注入（强化消息获取） ==========
+// ========== 群聊菜单注入（原生风格，两列并排） ==========
 %hook AFDHoverableContainerView
 - (void)didMoveToSuperview {
     %orig;
@@ -533,16 +536,11 @@ static void setupStackViewLayoutHook(void) {
         while (view) {
             if ([view isKindOfClass:[UITableViewCell class]] || [view isKindOfClass:[UICollectionViewCell class]]) {
                 id msg = extractMessageFromCell(view);
-                if (msg) {
-                    g_lastLongPressedMessage = msg;
-                    break;
-                }
+                if (msg) { g_lastLongPressedMessage = msg; break; }
             }
             view = view.superview;
         }
-        if (!g_lastLongPressedMessage) {
-            g_lastLongPressedMessage = getMessageFromMenuView(self);
-        }
+        if (!g_lastLongPressedMessage) g_lastLongPressedMessage = getMessageFromMenuView(self);
     }
 }
 
@@ -552,31 +550,70 @@ static void setupStackViewLayoutHook(void) {
 
     id message = g_lastLongPressedMessage;
     if (!message) message = getMessageFromMenuView(self);
-
     if (!message || ![message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return;
 
-    CGFloat menuH = self.bounds.size.height;
-    CGFloat btnW = self.bounds.size.width - 32;
+    // 寻找菜单内容区域，通常是一个 UICollectionView 或内部大 UIView
+    UIView *contentArea = nil;
+    for (UIView *sub in self.subviews) {
+        if ([sub isKindOfClass:[UICollectionView class]]) {
+            contentArea = sub;
+            break;
+        }
+    }
+    if (!contentArea) {
+        for (UIView *sub in self.subviews) {
+            if (sub.frame.size.height > self.bounds.size.height * 0.5 && sub.frame.size.width > 60) {
+                contentArea = sub;
+                break;
+            }
+        }
+    }
+    if (!contentArea) contentArea = self;
 
-    UIButton *downloadBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    downloadBtn.tag = 30001;
-    downloadBtn.frame = CGRectMake(16, menuH - 100, btnW, 44);
-    [downloadBtn setTitle:@"📥 下载语音" forState:UIControlStateNormal];
-    downloadBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
-    downloadBtn.layer.cornerRadius = 10;
-    downloadBtn.tintColor = [UIColor whiteColor];
-    [downloadBtn addTarget:self action:@selector(aweca_groupDownloadAction) forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:downloadBtn];
+    CGFloat y = contentArea.frame.origin.y + contentArea.frame.size.height + 4;
+    CGFloat centerX = self.bounds.size.width / 2;
 
-    UIButton *settingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    settingsBtn.tag = 30002;
-    settingsBtn.frame = CGRectMake(16, menuH - 50, btnW, 44);
-    [settingsBtn setTitle:@"⚙️ 语音设置" forState:UIControlStateNormal];
-    settingsBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
-    settingsBtn.layer.cornerRadius = 10;
-    settingsBtn.tintColor = [UIColor whiteColor];
-    [settingsBtn addTarget:self action:@selector(aweca_groupSettingsAction) forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:settingsBtn];
+    // 创建下载按钮（上图标24x24，下文字50x15，字体12）
+    UIView *downloadItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
+    downloadItem.tag = 30001;
+    downloadItem.center = CGPointMake(centerX - 40, y + 25);
+
+    UIImageView *downloadIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
+    downloadIcon.image = [[UIImage systemImageNamed:@"arrow.down.circle"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    downloadIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+    [downloadItem addSubview:downloadIcon];
+
+    UILabel *downloadLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
+    downloadLabel.text = @"下载";
+    downloadLabel.font = [UIFont systemFontOfSize:12];
+    downloadLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+    downloadLabel.textAlignment = NSTextAlignmentCenter;
+    [downloadItem addSubview:downloadLabel];
+
+    UITapGestureRecognizer *tap1 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupDownloadAction)];
+    [downloadItem addGestureRecognizer:tap1];
+    [self addSubview:downloadItem];
+
+    // 创建设置按钮（样式同上）
+    UIView *settingsItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
+    settingsItem.tag = 30002;
+    settingsItem.center = CGPointMake(centerX + 40, y + 25);
+
+    UIImageView *settingsIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
+    settingsIcon.image = [[UIImage systemImageNamed:@"gearshape"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    settingsIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+    [settingsItem addSubview:settingsIcon];
+
+    UILabel *settingsLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
+    settingsLabel.text = @"设置";
+    settingsLabel.font = [UIFont systemFontOfSize:12];
+    settingsLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+    settingsLabel.textAlignment = NSTextAlignmentCenter;
+    [settingsItem addSubview:settingsLabel];
+
+    UITapGestureRecognizer *tap2 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupSettingsAction)];
+    [settingsItem addGestureRecognizer:tap2];
+    [self addSubview:settingsItem];
 }
 %end
 
@@ -584,15 +621,9 @@ static void setupStackViewLayoutHook(void) {
 static void doDownloadVoiceFromMenu(id menuView) {
     id message = g_lastLongPressedMessage;
     if (!message) message = getMessageFromMenuView((UIView *)menuView);
-    if (!message) {
-        [AWECAUtils showToast:@"无法获取消息对象"];
-        return;
-    }
+    if (!message) { [AWECAUtils showToast:@"无法获取消息对象"]; return; }
     NSString *audioURL = extractAudioURLFromMessage(message);
-    if (!audioURL.length) {
-        [AWECAUtils showToast:@"无法获取音频链接，请先播放该语音"];
-        return;
-    }
+    if (!audioURL.length) { [AWECAUtils showToast:@"无法获取音频链接，请先播放该语音"]; return; }
     NSString *msgID = [message valueForKey:@"messageID"];
     showSaveDialogForURL(audioURL, msgID);
 }
@@ -629,10 +660,7 @@ static void downloadFromURL(NSString *urlStr, NSString *savePath) {
     if (!url) { [AWECAUtils showToast:@"URL 无效"]; return; }
     NSURLSession *session = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
     [[session downloadTaskWithURL:url completionHandler:^(NSURL *tmpFile, NSURLResponse *response, NSError *error) {
-        if (error || !tmpFile) {
-            dispatch_async(dispatch_get_main_queue(), ^{ [AWECAUtils showToast:@"下载失败"]; });
-            return;
-        }
+        if (error || !tmpFile) { dispatch_async(dispatch_get_main_queue(), ^{ [AWECAUtils showToast:@"下载失败"]; }); return; }
         NSFileManager *fm = [NSFileManager defaultManager];
         NSString *dir = [savePath stringByDeletingLastPathComponent];
         [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
