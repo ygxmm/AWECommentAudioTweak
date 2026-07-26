@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（私信下载复用评论区逻辑）
+// AWECommentAudioTweak - 全功能最终版（原生菜单下载 & 设置）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -22,9 +22,6 @@
 @end
 
 @interface AWEIMFormatAudioRecordController : NSObject
-@end
-
-@interface AWEIMEmojiReplyMenuView : UIView
 @end
 
 // 前置声明
@@ -374,17 +371,11 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 私信长按菜单：下载 & 设置 ==========
+// ========== 私信原生菜单注入（下载 & 设置） ==========
 
-// 下载按钮回调（缓存 CDN 链接，构造模型，调用评论区下载）
-static void aweca_downloadVoiceFromMenuIMP(id self, SEL _cmd) {
-    UIView *cell = [(UIView *)self superview];
-    while (cell && ![cell isKindOfClass:[UITableViewCell class]] && ![cell isKindOfClass:[UICollectionViewCell class]]) {
-        cell = cell.superview;
-    }
-    if (!cell) return;
-
-    id message = [cell valueForKey:@"message"];
+// 下载功能实现
+static void doDownloadVoice(id menuView) {
+    id message = [menuView valueForKey:@"message"];
     if (!message) return;
 
     NSString *audioURL = nil;
@@ -395,7 +386,7 @@ static void aweca_downloadVoiceFromMenuIMP(id self, SEL _cmd) {
         if (resourceUrl) {
             audioURL = [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
         }
-        durationMs = [content valueForKey:@"duration"]; // 毫秒
+        durationMs = [content valueForKey:@"duration"];
     }
 
     if (!audioURL.length) {
@@ -403,77 +394,96 @@ static void aweca_downloadVoiceFromMenuIMP(id self, SEL _cmd) {
         return;
     }
 
-    // 生成唯一 fakeVID，缓存 CDN 链接
     NSString *fakeVID = [NSString stringWithFormat:@"im_voice_%@", @([[NSDate date] timeIntervalSince1970])];
     [[AWECADownloadManager shared] cacheURL:audioURL forVID:fakeVID];
 
-    // 构造 AWECommentModel
     id commentModel = [[NSClassFromString(@"AWECommentModel") alloc] init];
-    if (!commentModel) {
-        // 保底分享
-        NSURL *url = [NSURL URLWithString:audioURL];
-        UIActivityViewController *vc = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
-        UIViewController *top = [AWECAUtils topViewController];
-        if (top) [top presentViewController:vc animated:YES completion:nil];
-        return;
-    }
+    if (!commentModel) return;
 
     id audioModel = [[NSClassFromString(@"AWECommentAudioModel") alloc] init];
-    if (!audioModel) {
-        NSURL *url = [NSURL URLWithString:audioURL];
-        UIActivityViewController *vc = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
-        UIViewController *top = [AWECAUtils topViewController];
-        if (top) [top presentViewController:vc animated:YES completion:nil];
-        return;
-    }
+    if (!audioModel) return;
 
     [audioModel setValue:fakeVID forKey:@"vID"];
-    if (durationMs) {
-        [audioModel setValue:durationMs forKey:@"duration"];
-    } else {
-        [audioModel setValue:@(0) forKey:@"duration"];
-    }
+    if (durationMs) [audioModel setValue:durationMs forKey:@"duration"];
+    else [audioModel setValue:@(0) forKey:@"duration"];
     [commentModel setValue:audioModel forKey:@"audioModel"];
     [commentModel setValue:fakeVID forKey:@"commentID"];
 
-    // 调用下载管理器（与评论区完全一致）
     [[AWECADownloadManager shared] showSaveDialogAndDownload:commentModel];
 }
 
-// 语音设置按钮回调
-static void aweca_voiceSettingsFromMenuIMP(id self, SEL _cmd) {
+// 语音设置功能实现
+static void doVoiceSettings(id menuView) {
     UIViewController *vc = [AWECAUtils topViewController];
     [[AWECAAudioPickerController shared] showPickerFromViewController:vc];
 }
 
+// Hook 数据源方法，追加两个新菜单项
 %hook AWEIMEmojiReplyMenuView
 
-- (void)layoutSubviews {
+- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
+    NSInteger originalCount = %orig;
+    id message = [self valueForKey:@"message"];
+    if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+        return originalCount + 2;
+    }
+    return originalCount;
+}
+
+- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
+    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
+    
+    if (indexPath.item >= originalCount) {
+        // 复用原生 Cell 样式
+        UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
+        
+        // 找到 Cell 内部的 UIImageView 和 UILabel 并修改它们
+        for (UIView *sub in cell.subviews) {
+            for (UIView *inner in sub.subviews) {
+                if ([inner isKindOfClass:[UIImageView class]]) {
+                    UIImageView *imageView = (UIImageView *)inner;
+                    if (indexPath.item == originalCount) {
+                        // 下载图标
+                        UIImage *downloadImage = [UIImage systemImageNamed:@"arrow.down.circle"];
+                        if (downloadImage) imageView.image = downloadImage;
+                    } else {
+                        // 设置图标
+                        UIImage *settingsImage = [UIImage systemImageNamed:@"gearshape"];
+                        if (settingsImage) imageView.image = settingsImage;
+                    }
+                }
+                if ([inner isKindOfClass:[UILabel class]]) {
+                    UILabel *label = (UILabel *)inner;
+                    if (indexPath.item == originalCount) {
+                        label.text = @"下载";
+                        cell.accessibilityLabel = @"下载";
+                    } else {
+                        label.text = @"设置";
+                        cell.accessibilityLabel = @"设置";
+                    }
+                }
+            }
+        }
+        
+        return cell;
+    }
+    
+    return %orig;
+}
+
+- (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
+    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
+    
+    if (indexPath.item >= originalCount) {
+        if (indexPath.item == originalCount) {
+            doDownloadVoice(self);
+        } else {
+            doVoiceSettings(self);
+        }
+        return;
+    }
+    
     %orig;
-    if (self.hidden) return;
-    if ([self viewWithTag:30001]) return;
-
-    CGFloat menuH = self.bounds.size.height;
-
-    UIButton *downloadBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    downloadBtn.tag = 30001;
-    downloadBtn.frame = CGRectMake(16, menuH - 100, self.bounds.size.width - 32, 44);
-    [downloadBtn setTitle:@"📥 下载语音" forState:UIControlStateNormal];
-    downloadBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
-    downloadBtn.layer.cornerRadius = 10;
-    downloadBtn.tintColor = [UIColor whiteColor];
-    [downloadBtn addTarget:self action:@selector(aweca_downloadVoiceFromMenu) forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:downloadBtn];
-
-    UIButton *settingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    settingsBtn.tag = 30002;
-    settingsBtn.frame = CGRectMake(16, menuH - 50, self.bounds.size.width - 32, 44);
-    [settingsBtn setTitle:@"⚙️ 语音设置" forState:UIControlStateNormal];
-    settingsBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
-    settingsBtn.layer.cornerRadius = 10;
-    settingsBtn.tintColor = [UIColor whiteColor];
-    [settingsBtn addTarget:self action:@selector(aweca_voiceSettingsFromMenu) forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:settingsBtn];
 }
 
 %end
@@ -484,14 +494,4 @@ static void aweca_voiceSettingsFromMenuIMP(id self, SEL _cmd) {
     setupAudioInputElementHook();
     setupAudioIconElementHook();
     setupStackViewLayoutHook();
-
-    Class menuClass = NSClassFromString(@"AWEIMEmojiReplyMenuView");
-    if (menuClass) {
-        if (!class_respondsToSelector(menuClass, @selector(aweca_downloadVoiceFromMenu))) {
-            class_addMethod(menuClass, @selector(aweca_downloadVoiceFromMenu), (IMP)aweca_downloadVoiceFromMenuIMP, "v@:");
-        }
-        if (!class_respondsToSelector(menuClass, @selector(aweca_voiceSettingsFromMenu))) {
-            class_addMethod(menuClass, @selector(aweca_voiceSettingsFromMenu), (IMP)aweca_voiceSettingsFromMenuIMP, "v@:");
-        }
-    }
 }
