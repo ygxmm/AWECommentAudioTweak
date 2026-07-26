@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（TableView 直接抓消息 + 下载 & 设置）
+// AWECommentAudioTweak - 全功能最终版（TableView 精准抓取 + 下载 & 设置，与评论区完全一致）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -26,6 +26,10 @@
 
 @interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
 @property (nonatomic, strong) UICollectionView *collectionView;
+@end
+
+@interface AWEIMMessageTableView : UITableView
+@property (nonatomic, weak) AWEIMConversationContext *componentContext;
 @end
 
 @interface AWEIMAudioPlaySessionTracker : NSObject
@@ -69,7 +73,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// 从菜单视图获取消息对象
+// 从菜单视图获取消息对象（精准定位）
 static id getMessageFromMenuView(UIView *menuView) {
     // 1. 先尝试从菜单自身获取 message 属性
     id message = [menuView valueForKey:@"message"];
@@ -79,34 +83,21 @@ static id getMessageFromMenuView(UIView *menuView) {
     UIView *cell = menuView;
     while (cell) {
         if ([cell isKindOfClass:NSClassFromString(@"AWEIMReusableCommonCell")]) {
+            message = [cell valueForKey:@"message"];
+            if (message) return message;
             break;
         }
         cell = cell.superview;
     }
 
-    if (cell) {
-        message = [cell valueForKey:@"message"];
-        if (message) return message;
-
-        id context = [cell valueForKey:@"currentContext"];
-        if (context) {
-            message = [context valueForKey:@"message"];
-            if (message) return message;
-        }
-    }
-
-    // 3. 从 TableView 中查找
+    // 3. 通过 TableView 精准定位被长按的 Cell
     UIView *tableView = menuView;
-    while (tableView) {
-        if ([tableView isKindOfClass:[UITableView class]]) {
-            break;
-        }
+    while (tableView && ![tableView isKindOfClass:[UITableView class]]) {
         tableView = tableView.superview;
     }
 
-    if (tableView) {
-        // 获取点击的 Cell 的 IndexPath
-        CGPoint menuCenter = [menuView convertPoint:menuView.center toView:tableView];
+    if (tableView && [tableView isKindOfClass:[UITableView class]]) {
+        CGPoint menuCenter = [menuView convertPoint:CGPointMake(menuView.bounds.size.width/2, menuView.bounds.size.height/2) toView:tableView];
         NSIndexPath *indexPath = [(UITableView *)tableView indexPathForRowAtPoint:menuCenter];
         if (indexPath) {
             UITableViewCell *clickedCell = [(UITableView *)tableView cellForRowAtIndexPath:indexPath];
