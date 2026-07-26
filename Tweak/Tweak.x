@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（私信下载直接抓URL，无需播放）
+// AWECommentAudioTweak - 全功能最终版（基于 originURLList 直接下载，无需播放）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -85,13 +85,21 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// 从消息对象中提取音频 URL
+// 从消息对象中提取音频 URL（优先取 originURLList 第一个）
 static NSString *extractAudioURLFromMessage(id message) {
     if (!message) return nil;
     id content = [message valueForKey:@"content"];
     if (!content) return nil;
     id resourceUrl = [content valueForKey:@"resourceUrl"];
     if (!resourceUrl) return nil;
+
+    // 尝试拿 originURLList 数组的第一个 URL
+    NSArray *originList = [resourceUrl valueForKey:@"originURLList"];
+    if (originList && originList.count > 0) {
+        return originList.firstObject;
+    }
+
+    // 备用：url 或 urlString
     return [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
 }
 
@@ -547,7 +555,7 @@ static void doVoiceSettings(id menuView) {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
-        cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0]; // 浅灰色，与原生菜单一致
+        cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
 
         for (UIView *sub in cell.subviews) {
             for (UIView *inner in sub.subviews) {
