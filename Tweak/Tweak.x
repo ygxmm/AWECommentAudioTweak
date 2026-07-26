@@ -10,14 +10,12 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
-// ==== 私信录音控制器声明（避免编译报错） ====
+// ==== 私信录音控制器声明 ====
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
-- (BOOL)sendRecordMessageIfNeededWithFilePath:(id)filePath audioRecorder:(id)recorder;
 @end
 
 @interface AWEIMFormatAudioRecordController : NSObject
-// 不需要声明具体属性，我们通过 KVC 访问 recorder.url
 @end
 
 // 前置声明
@@ -361,18 +359,28 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 私信语音替换 ==========
+// ========== 私信语音替换（修正时长） ==========
 
 %hook AWEIMAudioRecordController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
+    %orig;
     if (success && [AWECAAudioReplacer shared].enabled) {
         NSString *filePath = self.recordFilePath;
         if (filePath.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:filePath];
+            double realDuration = [AWECAUtils audioDurationAtPath:filePath];
+            if (realDuration > 0) {
+                @try {
+                    [self setValue:@(realDuration) forKey:@"totalTime"];
+                } @catch (NSException *e) {
+                    @try {
+                        [self setValue:@(realDuration) forKey:@"duration"];
+                    } @catch (NSException *e2) {}
+                }
+            }
             [AWECAUtils showToast:@"私信语音已替换"];
         }
     }
-    %orig;
 }
 
 - (BOOL)sendRecordMessageIfNeededWithFilePath:(id)filePath audioRecorder:(id)recorder {
@@ -388,6 +396,7 @@ static void setupStackViewLayoutHook(void) {
 
 %hook AWEIMFormatAudioRecordController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
+    %orig;
     if (success && [AWECAAudioReplacer shared].enabled) {
         NSString *filePath = nil;
         if ([recorder respondsToSelector:@selector(url)]) {
@@ -395,10 +404,19 @@ static void setupStackViewLayoutHook(void) {
         }
         if (filePath.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:filePath];
+            double realDuration = [AWECAUtils audioDurationAtPath:filePath];
+            if (realDuration > 0) {
+                @try {
+                    [self setValue:@(realDuration) forKey:@"totalTime"];
+                } @catch (NSException *e) {
+                    @try {
+                        [self setValue:@(realDuration) forKey:@"duration"];
+                    } @catch (NSException *e2) {}
+                }
+            }
             [AWECAUtils showToast:@"格式语音已替换"];
         }
     }
-    %orig;
 }
 
 - (BOOL)sendRecordMessageIfNeededWithData:(id)data audioRecorder:(id)recorder {
