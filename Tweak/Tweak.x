@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 完整调试版（弹窗显示布局信息 + 全部原有功能）
+// AWECommentAudioTweak - 最终稳定版（群聊菜单加高 + 按钮正常，轻量查找）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -29,10 +29,6 @@
 @end
 @interface AFDHoverableContainerView : UIView
 @end
-@interface AWEIMAudioPlaySessionTracker : NSObject
-+ (id)sharedInstance;
-- (void)beginPlaySessionWithSessionID:(id)arg0 conversationID:(id)arg1 messageID:(id)arg2 audioDurationMs:(long long)arg3 triggerType:(id)arg4;
-@end
 
 // 前置声明
 static void setupAudioIconElementHook(void);
@@ -50,12 +46,9 @@ static NSString *extractAudioURLFromMessage(id message);
 static id extractMessageFromCell(UIView *cell);
 static void aweca_groupDownloadAction(id self, SEL _cmd);
 static void aweca_groupSettingsAction(id self, SEL _cmd);
-static void showDebugAlert(UIView *targetView);
 
 // 存储最近长按的消息对象
 static id g_lastLongPressedMessage = nil;
-// 调试弹窗只显示一次
-static BOOL g_debugAlertShown = NO;
 
 // 获取真实音频时长
 static double realAudioDuration(NSString *filePath) {
@@ -111,7 +104,7 @@ static id extractMessageFromCell(UIView *cell) {
     return nil;
 }
 
-// 从菜单视图查找消息对象
+// 从菜单视图查找消息对象（轻量版，仅向上找 Cell）
 static id getMessageFromMenuView(UIView *menuView) {
     UIView *current = menuView;
     while (current) {
@@ -123,43 +116,6 @@ static id getMessageFromMenuView(UIView *menuView) {
         current = current.superview;
     }
     return nil;
-}
-
-// 显示调试弹窗
-static void showDebugAlert(UIView *targetView) {
-    if (g_debugAlertShown) return;
-    g_debugAlertShown = YES;
-
-    NSMutableString *info = [NSMutableString string];
-    [info appendFormat:@"AFDHoverableContainerView frame:\n%@\n\n", NSStringFromCGRect(targetView.frame)];
-
-    // 查找 UICollectionView
-    UICollectionView *cv = nil;
-    for (UIView *sub in targetView.subviews) {
-        if ([sub isKindOfClass:[UICollectionView class]]) {
-            cv = (UICollectionView *)sub;
-            break;
-        }
-    }
-    if (cv) {
-        [info appendFormat:@"UICollectionView frame:\n%@\n", NSStringFromCGRect(cv.frame)];
-        [info appendFormat:@"UICollectionView contentSize:\n%@\n", NSStringFromCGSize(cv.contentSize)];
-    } else {
-        [info appendString:@"UICollectionView not found\n"];
-    }
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *topVC = [AWECAUtils topViewController];
-        if (!topVC) return;
-
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"调试信息" message:info preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"复制" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            [[UIPasteboard generalPasteboard] setString:info];
-            [AWECAUtils showToast:@"已复制到剪贴板"];
-        }]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-        [topVC presentViewController:alert animated:YES completion:nil];
-    });
 }
 
 // ========== 评论区功能 ==========
@@ -551,21 +507,67 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 群聊菜单调试 Hook（弹窗版） ==========
+// ========== 群聊菜单容器：加高并添加按钮 ==========
 %hook AFDHoverableContainerView
-
-- (void)didMoveToSuperview {
-    %orig;
-    if (self.superview && !g_debugAlertShown) {
-        // 延迟一点，确保布局完成
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            showDebugAlert(self);
-        });
-    }
-}
 
 - (void)layoutSubviews {
     %orig;
+
+    // 防止重复添加按钮
+    if ([self viewWithTag:30001]) return;
+
+    // 获取消息对象（轻量查找）
+    id message = g_lastLongPressedMessage;
+    if (!message) {
+        message = getMessageFromMenuView(self);
+        if (message) g_lastLongPressedMessage = message;
+    }
+    if (!message || ![message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return;
+
+    // 增加容器高度
+    CGRect f = self.frame;
+    f.size.height += 54;
+    self.frame = f;
+
+    // 在底部添加下载和设置按钮
+    CGFloat centerX = self.bounds.size.width / 2;
+    CGFloat y = self.bounds.size.height - 54 + 4;
+
+    // 下载按钮
+    UIView *downloadItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
+    downloadItem.tag = 30001;
+    downloadItem.center = CGPointMake(centerX - 40, y + 25);
+    UIImageView *downloadIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
+    downloadIcon.image = [[UIImage systemImageNamed:@"arrow.down.circle"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    downloadIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+    [downloadItem addSubview:downloadIcon];
+    UILabel *downloadLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
+    downloadLabel.text = @"下载";
+    downloadLabel.font = [UIFont systemFontOfSize:12];
+    downloadLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+    downloadLabel.textAlignment = NSTextAlignmentCenter;
+    [downloadItem addSubview:downloadLabel];
+    UITapGestureRecognizer *tap1 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupDownloadAction)];
+    [downloadItem addGestureRecognizer:tap1];
+    [self addSubview:downloadItem];
+
+    // 设置按钮
+    UIView *settingsItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
+    settingsItem.tag = 30002;
+    settingsItem.center = CGPointMake(centerX + 40, y + 25);
+    UIImageView *settingsIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
+    settingsIcon.image = [[UIImage systemImageNamed:@"gearshape"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    settingsIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+    [settingsItem addSubview:settingsIcon];
+    UILabel *settingsLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
+    settingsLabel.text = @"设置";
+    settingsLabel.font = [UIFont systemFontOfSize:12];
+    settingsLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+    settingsLabel.textAlignment = NSTextAlignmentCenter;
+    [settingsItem addSubview:settingsLabel];
+    UITapGestureRecognizer *tap2 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupSettingsAction)];
+    [settingsItem addGestureRecognizer:tap2];
+    [self addSubview:settingsItem];
 }
 
 %end
