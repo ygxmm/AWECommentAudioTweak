@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（群聊下载修复）
+// AWECommentAudioTweak - 全功能最终版（群聊菜单高度修复 + 下载正常）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -599,12 +599,11 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 群聊菜单注入（强制查找消息对象） ==========
+// ========== 群聊菜单注入（修复高度 + 强制查找消息） ==========
 %hook AFDHoverableContainerView
 - (void)didMoveToSuperview {
     %orig;
     if (self.superview) {
-        // 立即查找消息对象
         id msg = getMessageFromMenuView(self);
         if (msg) {
             g_lastLongPressedMessage = msg;
@@ -614,13 +613,26 @@ static void setupStackViewLayoutHook(void) {
 }
 
 - (void)layoutSubviews {
+    // 先调整内部 UICollectionView 高度，使其容纳两行菜单
+    for (UIView *sub in self.subviews) {
+        if ([sub isKindOfClass:[UICollectionView class]]) {
+            UICollectionView *cv = (UICollectionView *)sub;
+            CGRect frame = cv.frame;
+            if (frame.size.height < 146) { // 需要容纳两行
+                frame.size.height = 146;
+                cv.frame = frame;
+            }
+            break;
+        }
+    }
     %orig;
-    // 每次布局都尝试获取消息，确保下载可用
+
+    // 获取消息对象并添加下载/设置按钮
     id message = getMessageFromMenuView(self);
     if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         g_lastLongPressedMessage = message;
         cacheAudioURLForMessage(message);
-        
+
         if (![self viewWithTag:30001]) {
             UIView *contentArea = nil;
             for (UIView *sub in self.subviews) {
