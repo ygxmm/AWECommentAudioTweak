@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（终极修复：通过 TableView 定位消息）
+// AWECommentAudioTweak - 全功能最终版（修复下载失效，双保险抓取消息）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -46,6 +46,9 @@ static void doVoiceSettings(id menuView);
 static id getMessageFromMenuView(UIView *menuView);
 static NSString *extractAudioURLFromMessage(id message);
 
+// 全局静态变量，存储最近一次长按的消息对象
+static id g_lastLongPressedMessage = nil;
+
 // 获取真实时长
 static double realAudioDuration(NSString *filePath) {
     NSURL *url = [NSURL fileURLWithPath:filePath];
@@ -70,71 +73,6 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// 终极版消息查找：通过 TableView 定位被长按的行
-static id getMessageFromMenuView(UIView *menuView) {
-    // 1. 先向上找到 TableView
-    UIView *current = menuView;
-    UITableView *tableView = nil;
-    while (current) {
-        if ([current isKindOfClass:[UITableView class]]) {
-            tableView = (UITableView *)current;
-            break;
-        }
-        current = current.superview;
-    }
-
-    if (tableView) {
-        // 获取菜单中心在 TableView 中的位置
-        CGPoint menuCenter = [menuView convertPoint:CGPointMake(menuView.bounds.size.width/2, menuView.bounds.size.height/2) toView:tableView];
-        NSIndexPath *indexPath = [tableView indexPathForRowAtPoint:menuCenter];
-        if (indexPath) {
-            UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
-            if (cell) {
-                // 尝试从 Cell 的各种可能路径获取消息
-                id message = [cell valueForKey:@"message"];
-                if (message) return message;
-
-                id context = [cell valueForKey:@"currentContext"];
-                if (context) {
-                    message = [context valueForKey:@"message"];
-                    if (message) return message;
-                }
-            }
-
-            // 如果 visibleCells 中没拿到，尝试通过数据源方法获取（备用）
-            id<UITableViewDataSource> dataSource = tableView.dataSource;
-            if (dataSource && [dataSource respondsToSelector:@selector(tableView:cellForRowAtIndexPath:)]) {
-                // 注意：不能随意调用 cellForRowAtIndexPath，可能触发不必要的创建，只在必要时候用
-                // 这里作为最后的尝试
-                UITableViewCell *dataCell = [dataSource tableView:tableView cellForRowAtIndexPath:indexPath];
-                if (dataCell) {
-                    id message = [dataCell valueForKey:@"message"];
-                    if (message) return message;
-                }
-            }
-        }
-    }
-
-    // 2. 如果 TableView 定位失败，回退到直接向上找 Cell（兼容某些异常情况）
-    current = menuView;
-    while (current) {
-        if ([current isKindOfClass:[UITableViewCell class]]) {
-            id message = [current valueForKey:@"message"];
-            if (message) return message;
-
-            id context = [current valueForKey:@"currentContext"];
-            if (context) {
-                message = [context valueForKey:@"message"];
-                if (message) return message;
-            }
-            break;
-        }
-        current = current.superview;
-    }
-
-    return nil;
-}
-
 // 从消息对象中提取音频 URL（优先取 originURLList 第一个）
 static NSString *extractAudioURLFromMessage(id message) {
     if (!message) return nil;
@@ -151,6 +89,53 @@ static NSString *extractAudioURLFromMessage(id message) {
 
     // 备用：url 或 urlString
     return [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
+}
+
+// 兜底查找：通过 TableView 定位消息
+static id getMessageFromMenuView(UIView *menuView) {
+    // 向上找 TableView
+    UIView *current = menuView;
+    UITableView *tableView = nil;
+    while (current) {
+        if ([current isKindOfClass:[UITableView class]]) {
+            tableView = (UITableView *)current;
+            break;
+        }
+        current = current.superview;
+    }
+    if (tableView) {
+        CGPoint menuCenter = [menuView convertPoint:CGPointMake(menuView.bounds.size.width/2, menuView.bounds.size.height/2) toView:tableView];
+        NSIndexPath *indexPath = [tableView indexPathForRowAtPoint:menuCenter];
+        if (indexPath) {
+            UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
+            if (cell) {
+                id message = [cell valueForKey:@"message"];
+                if (message) return message;
+                id context = [cell valueForKey:@"currentContext"];
+                if (context) {
+                    message = [context valueForKey:@"message"];
+                    if (message) return message;
+                }
+            }
+        }
+    }
+
+    // 回退：直接向上找 Cell
+    current = menuView;
+    while (current) {
+        if ([current isKindOfClass:[UITableViewCell class]]) {
+            id message = [current valueForKey:@"message"];
+            if (message) return message;
+            id context = [current valueForKey:@"currentContext"];
+            if (context) {
+                message = [context valueForKey:@"message"];
+                if (message) return message;
+            }
+            break;
+        }
+        current = current.superview;
+    }
+    return nil;
 }
 
 // ========== 评论区功能（保持不变） ==========
@@ -463,12 +448,30 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 私信原生菜单注入（终极修复） ==========
+// ========== 关键：长按菜单显示时保存消息 ==========
+%hook AWEIMMessageListViewController
+
+- (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
+    %orig;
+    if (message) {
+        g_lastLongPressedMessage = message;
+    }
+}
+
+%end
+
+// ========== 私信原生菜单注入（下载 & 设置） ==========
 
 static void doDownloadVoice(id menuView) {
-    id message = getMessageFromMenuView((UIView *)menuView);
+    // 优先使用长按回调保存的消息
+    id message = g_lastLongPressedMessage;
     if (!message) {
-        [AWECAUtils showToast:@"无法获取消息对象，请尝试点击后下载"];
+        // 回退到 TableView 查找
+        message = getMessageFromMenuView((UIView *)menuView);
+    }
+
+    if (!message) {
+        [AWECAUtils showToast:@"无法获取消息对象"];
         return;
     }
 
@@ -576,8 +579,7 @@ static void doVoiceSettings(id menuView) {
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
-    id message = getMessageFromMenuView(self);
-    if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         return originalCount + 2;
     }
     return originalCount;
