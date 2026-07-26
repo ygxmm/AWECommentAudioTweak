@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（群聊菜单修复）
+// AWECommentAudioTweak - 全功能最终版（群聊下载修复）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -35,6 +35,11 @@
 @interface AFDHoverableContainerView : UIView
 @end
 
+@interface AWEIMAudioPlaySessionTracker : NSObject
++ (id)sharedInstance;
+- (void)beginPlaySessionWithSessionID:(id)arg0 conversationID:(id)arg1 messageID:(id)arg2 audioDurationMs:(long long)arg3 triggerType:(id)arg4;
+@end
+
 // 前置声明
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
@@ -49,6 +54,7 @@ static void doVoiceSettings(id menuView);
 static id getMessageFromMenuView(UIView *menuView);
 static NSString *extractAudioURLFromMessage(id message);
 static id extractMessageFromCell(UIView *cell);
+static void cacheAudioURLForMessage(id message);
 
 // 群聊按钮回调
 static void aweca_groupDownloadAction(id self, SEL _cmd) { doDownloadVoiceFromMenu(self); }
@@ -93,9 +99,20 @@ static NSString *extractAudioURLFromMessage(id message) {
     return [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
 }
 
-// 从 Cell 中尝试提取消息对象
+// 缓存消息中的音频链接
+static void cacheAudioURLForMessage(id message) {
+    if (!message) return;
+    NSString *urlStr = extractAudioURLFromMessage(message);
+    if (!urlStr.length) return;
+    NSString *msgID = [message valueForKey:@"messageID"];
+    if (!msgID) return;
+    [[AWECADownloadManager shared] cacheURL:urlStr forVID:msgID];
+}
+
+// 从 Cell 中尝试提取消息对象（增强版）
 static id extractMessageFromCell(UIView *cell) {
     if (!cell) return nil;
+    // 常见属性名
     NSArray *keys = @[@"message", @"item", @"model", @"data", @"viewModel", @"audioMessage", @"voiceMessage", @"chatMessage"];
     for (NSString *key in keys) {
         id msg = [cell valueForKey:key];
@@ -110,6 +127,7 @@ static id extractMessageFromCell(UIView *cell) {
             }
         }
     }
+    // 尝试从 currentContext 获取
     id context = [cell valueForKey:@"currentContext"];
     if (context) {
         for (NSString *key in @[@"message", @"item", @"data"]) {
@@ -120,7 +138,7 @@ static id extractMessageFromCell(UIView *cell) {
     return nil;
 }
 
-// 增强版消息查找
+// 增强版消息查找（支持 UITableView 和 UICollectionView）
 static id getMessageFromMenuView(UIView *menuView) {
     UIView *current = menuView;
     while (current) {
@@ -147,6 +165,7 @@ static id getMessageFromMenuView(UIView *menuView) {
         }
         current = current.superview;
     }
+    // 直接向上找 Cell
     current = menuView;
     while (current) {
         if ([current isKindOfClass:[UITableViewCell class]] || [current isKindOfClass:[UICollectionViewCell class]]) {
@@ -468,6 +487,53 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
+// ========== 播放时缓存链接（群聊下载兜底） ==========
+%hook AWEIMAudioPlaySessionTracker
+- (void)beginPlaySessionWithSessionID:(id)sessionID conversationID:(id)convID messageID:(id)msgID audioDurationMs:(long long)durationMs triggerType:(id)triggerType {
+    %orig;
+
+    UIWindow *window = nil;
+    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (scene.activationState == UISceneActivationStateForegroundActive) {
+            window = scene.windows.firstObject;
+            break;
+        }
+    }
+    if (!window) return;
+
+    // 递归查找 TableView/CollectionView 中的消息并缓存链接
+    void (^searchAndCache)(UIView *, NSString *) = ^(UIView *view, NSString *targetID) {
+        if ([view isKindOfClass:[UITableView class]]) {
+            for (UITableViewCell *cell in [(UITableView *)view visibleCells]) {
+                id message = [cell valueForKey:@"message"];
+                if (message) {
+                    NSString *currentMsgID = [message valueForKey:@"messageID"];
+                    if ([currentMsgID isEqualToString:targetID]) {
+                        cacheAudioURLForMessage(message);
+                        return;
+                    }
+                }
+            }
+        } else if ([view isKindOfClass:[UICollectionView class]]) {
+            for (UICollectionViewCell *cell in [(UICollectionView *)view visibleCells]) {
+                id message = extractMessageFromCell(cell);
+                if (message) {
+                    NSString *currentMsgID = [message valueForKey:@"messageID"];
+                    if ([currentMsgID isEqualToString:targetID]) {
+                        cacheAudioURLForMessage(message);
+                        return;
+                    }
+                }
+            }
+        }
+        for (UIView *sub in view.subviews) {
+            searchAndCache(sub, targetID);
+        }
+    };
+    searchAndCache(window, msgID);
+}
+%end
+
 // ========== 私信长按菜单回调 ==========
 %hook AWEIMMessageListViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
@@ -546,13 +612,18 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 群聊菜单注入（修复消息获取，原生布局） ==========
+// ========== 群聊菜单注入（强化消息获取，修复下载） ==========
 %hook AFDHoverableContainerView
 - (void)didMoveToSuperview {
     %orig;
     if (self.superview) {
         // 每次菜单显示时重新获取消息对象
-        g_lastLongPressedMessage = getMessageFromMenuView(self);
+        id msg = getMessageFromMenuView(self);
+        if (msg) {
+            g_lastLongPressedMessage = msg;
+            // 同时缓存链接
+            cacheAudioURLForMessage(msg);
+        }
     }
 }
 
@@ -561,7 +632,13 @@ static void setupStackViewLayoutHook(void) {
     if ([self viewWithTag:30001]) return;
 
     id message = g_lastLongPressedMessage;
-    if (!message) message = getMessageFromMenuView(self);
+    if (!message) {
+        message = getMessageFromMenuView(self);
+        if (message) {
+            g_lastLongPressedMessage = message;
+            cacheAudioURLForMessage(message);
+        }
+    }
     if (!message || ![message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return;
 
     UIView *contentArea = nil;
@@ -618,14 +695,29 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 下载和设置实现 ==========
+// ========== 下载和设置实现（双保险：消息URL + 播放缓存） ==========
 static void doDownloadVoiceFromMenu(id menuView) {
     id message = g_lastLongPressedMessage;
     if (!message) message = getMessageFromMenuView((UIView *)menuView);
-    if (!message) { [AWECAUtils showToast:@"无法获取消息对象"]; return; }
-    NSString *audioURL = extractAudioURLFromMessage(message);
-    if (!audioURL.length) { [AWECAUtils showToast:@"无法获取音频链接，请先播放该语音"]; return; }
-    NSString *msgID = [message valueForKey:@"messageID"];
+
+    NSString *audioURL = nil;
+    NSString *msgID = nil;
+
+    if (message) {
+        msgID = [message valueForKey:@"messageID"];
+        audioURL = extractAudioURLFromMessage(message);
+    }
+
+    // 如果消息中没有 URL，尝试从播放缓存中获取
+    if (!audioURL.length && msgID) {
+        audioURL = [[AWECADownloadManager shared] cachedURLForVID:msgID];
+    }
+
+    if (!audioURL.length) {
+        [AWECAUtils showToast:@"无法获取音频链接，请先播放该语音"];
+        return;
+    }
+
     showSaveDialogForURL(audioURL, msgID);
 }
 
