@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（群聊菜单高度自适应，按钮完整显示）
+// AWECommentAudioTweak - 全功能最终版（群聊父容器加高，按钮完整显示）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -536,7 +536,6 @@ static void setupStackViewLayoutHook(void) {
     for (UIView *sub in self.subviews) {
         if ([sub isKindOfClass:[UICollectionView class]]) {
             UICollectionView *cv = (UICollectionView *)sub;
-            // 如果是语音消息且全局变量有效，则扩展高度并禁用滚动
             if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
                 CGFloat contentH = cv.contentSize.height;
                 if (contentH > cv.frame.size.height) {
@@ -554,7 +553,6 @@ static void setupStackViewLayoutHook(void) {
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
-    // 如果 g_lastLongPressedMessage 为空，则尝试从当前菜单视图查找消息对象
     if (!g_lastLongPressedMessage) {
         id msg = getMessageFromMenuView(self);
         if (msg) {
@@ -563,7 +561,7 @@ static void setupStackViewLayoutHook(void) {
         }
     }
     if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
-        return originalCount + 2; // 追加“下载”和“设置”
+        return originalCount + 2;
     }
     return originalCount;
 }
@@ -572,20 +570,16 @@ static void setupStackViewLayoutHook(void) {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
-        // 清空旧子视图，避免重叠
         for (UIView *sub in cell.subviews) { [sub removeFromSuperview]; }
-        // 创建原生风格菜单项：上方图标，下方文字
         UIView *iconBg = [[UIView alloc] initWithFrame:CGRectMake(1, 4, 48, 48)];
         iconBg.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
         iconBg.layer.cornerRadius = 10;
         [cell addSubview:iconBg];
-
         UIImageView *iconView = [[UIImageView alloc] initWithFrame:CGRectMake(12, 12, 24, 24)];
         NSString *iconName = (indexPath.item == originalCount) ? @"arrow.down.circle" : @"gearshape";
         iconView.image = [[UIImage systemImageNamed:iconName] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
         iconView.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
         [iconBg addSubview:iconView];
-
         UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, 52, 50, 15)];
         label.text = (indexPath.item == originalCount) ? @"下载" : @"设置";
         label.font = [UIFont systemFontOfSize:12];
@@ -613,51 +607,28 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 群聊菜单容器高度自适应（关键修复） ==========
+// ========== 群聊菜单父容器加高（关键修复） ==========
 %hook AFDHoverableContainerView
 
 - (void)layoutSubviews {
     %orig; // 先让原生布局完成
 
-    // 找到内部的 UICollectionView
-    UICollectionView *cv = nil;
-    for (UIView *sub in self.subviews) {
-        if ([sub isKindOfClass:[UICollectionView class]]) {
-            cv = (UICollectionView *)sub;
-            break;
-        }
-    }
-    if (!cv) return;
-
-    // 如果检测到是语音消息（通过全局变量），需要扩展 UICollectionView 和容器的高度
+    // 如果检测到是语音消息，需要扩展容器的高度
     if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
-        // 获取实际内容高度
-        CGFloat contentH = cv.contentSize.height;
-        // 需要的高度：原有 UICollectionView 的高度 + 新按钮区域高度（约 54 点）
-        CGFloat extraHeight = 54; // 按钮区域高度（两个按钮高度 50 + 间距 4）
-        CGFloat neededCVHeight = contentH; // UICollectionView 本身应该等于其内容高度
-        CGFloat neededContainerHeight = cv.frame.origin.y + neededCVHeight + extraHeight;
+        // 计算需要增加的高度：按钮区域约 54 点（两个按钮高度 50 + 间距 4）
+        CGFloat extraHeight = 54;
+        CGFloat originalHeight = self.frame.size.height;
+        CGFloat neededHeight = originalHeight + extraHeight;
 
-        // 调整 UICollectionView 高度
-        if (neededCVHeight > cv.frame.size.height) {
-            CGRect cvFrame = cv.frame;
-            cvFrame.size.height = neededCVHeight;
-            cv.frame = cvFrame;
-            cv.scrollEnabled = NO;
-            cv.clipsToBounds = NO;
-        }
+        // 直接加高父容器
+        CGRect selfFrame = self.frame;
+        selfFrame.size.height = neededHeight;
+        self.frame = selfFrame;
 
-        // 调整容器自身高度
-        if (neededContainerHeight > self.frame.size.height) {
-            CGRect selfFrame = self.frame;
-            selfFrame.size.height = neededContainerHeight;
-            self.frame = selfFrame;
-        }
-
-        // 如果没有添加过按钮，则添加下载/设置按钮
+        // 如果没有添加过按钮，则创建下载/设置按钮
         if (![self viewWithTag:30001]) {
-            CGFloat y = cv.frame.origin.y + cv.frame.size.height + 4;
             CGFloat centerX = self.bounds.size.width / 2;
+            CGFloat y = originalHeight + 4; // 按钮放在原容器底部下方
 
             // 下载按钮
             UIView *downloadItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
