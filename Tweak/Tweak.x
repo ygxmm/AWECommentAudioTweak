@@ -13,8 +13,8 @@
 // 私信相关类声明
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
-@property (nonatomic, weak) UIView *audioInputView;                     // 用 UIView * 避免协议依赖
-- (void)updateRecordTimeLabelWithRealDuration:(double)realSec;          // 声明新增方法
+@property (nonatomic, weak) UIView *audioInputView;
+- (void)updateRecordTimeLabelWithRealDuration:(double)realSec;
 @end
 
 @interface AWEIMFormatAudioRecordController : NSObject
@@ -366,23 +366,20 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 私信语音替换（核心修复） ==========
+// ========== 私信语音替换（最终修复） ==========
 
 %hook AWEIMAudioRecordController
 
 - (void)updateRecordTimeLabelWithRealDuration:(double)realSec {
     UIView *audioView = self.audioInputView;
     if (!audioView) return;
-
     for (UIView *subview in audioView.subviews) {
         if ([subview isKindOfClass:NSClassFromString(@"AWEIMRecorderVolumeIncreaseView")]) {
             AWEIMRecorderVolumeIncreaseView *volView = (AWEIMRecorderVolumeIncreaseView *)subview;
             UILabel *timeLabel = volView.recordTimeLabel;
             if (timeLabel && [volView respondsToSelector:@selector(p_getTimeTextWithValue:)]) {
                 NSString *timeText = [volView p_getTimeTextWithValue:realSec];
-                if (timeText) {
-                    timeLabel.text = timeText;
-                }
+                if (timeText) timeLabel.text = timeText;
             }
             break;
         }
@@ -427,34 +424,21 @@ static void setupStackViewLayoutHook(void) {
     return %orig;
 }
 
+// 关键：生成气泡时直接使用真实时长作为参数
 - (id)p_generateAudioBubbleWithPowers:(id)powers totalTime:(double)totalTime {
-    id bubble = %orig;
     if ([AWECAAudioReplacer shared].enabled && self.recordFilePath.length > 0) {
         double realSec = [AWECAUtils audioDurationAtPath:self.recordFilePath];
-        if (realSec > 0) {
-            @try { [bubble setValue:@(realSec) forKey:@"duration"]; }
-            @catch (NSException *e) {
-                @try { [bubble setValue:@((long long)(realSec * 1000)) forKey:@"duration"]; }
-                @catch (NSException *e2) {}
-            }
-        }
+        if (realSec > 0) totalTime = realSec;
     }
-    return bubble;
+    return %orig;
 }
 
 - (id)p_generateNewAudioBubbleWithPowers:(id)powers totalTime:(double)totalTime {
-    id bubble = %orig;
     if ([AWECAAudioReplacer shared].enabled && self.recordFilePath.length > 0) {
         double realSec = [AWECAUtils audioDurationAtPath:self.recordFilePath];
-        if (realSec > 0) {
-            @try { [bubble setValue:@(realSec) forKey:@"duration"]; }
-            @catch (NSException *e) {
-                @try { [bubble setValue:@((long long)(realSec * 1000)) forKey:@"duration"]; }
-                @catch (NSException *e2) {}
-            }
-        }
+        if (realSec > 0) totalTime = realSec;
     }
-    return bubble;
+    return %orig;
 }
 
 %end
