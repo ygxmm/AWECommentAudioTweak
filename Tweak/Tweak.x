@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（群聊下载修复）
+// AWECommentAudioTweak - 全功能最终版（编译修复 + 群聊下载正常）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -55,6 +55,7 @@ static id getMessageFromMenuView(UIView *menuView);
 static NSString *extractAudioURLFromMessage(id message);
 static id extractMessageFromCell(UIView *cell);
 static void cacheAudioURLForMessage(id message);
+static void searchAndCacheMessage(UIView *view, NSString *targetID);
 
 // 群聊按钮回调
 static void aweca_groupDownloadAction(id self, SEL _cmd) { doDownloadVoiceFromMenu(self); }
@@ -109,10 +110,27 @@ static void cacheAudioURLForMessage(id message) {
     [[AWECADownloadManager shared] cacheURL:urlStr forVID:msgID];
 }
 
+// 递归查找并缓存消息（用于播放时缓存）
+static void searchAndCacheMessage(UIView *view, NSString *targetID) {
+    if (!view || !targetID) return;
+    if ([view isKindOfClass:[UITableViewCell class]] || [view isKindOfClass:[UICollectionViewCell class]]) {
+        id message = extractMessageFromCell(view);
+        if (message) {
+            NSString *currentMsgID = [message valueForKey:@"messageID"];
+            if ([currentMsgID isEqualToString:targetID]) {
+                cacheAudioURLForMessage(message);
+                return;
+            }
+        }
+    }
+    for (UIView *subview in view.subviews) {
+        searchAndCacheMessage(subview, targetID);
+    }
+}
+
 // 从 Cell 中尝试提取消息对象（增强版）
 static id extractMessageFromCell(UIView *cell) {
     if (!cell) return nil;
-    // 常见属性名
     NSArray *keys = @[@"message", @"item", @"model", @"data", @"viewModel", @"audioMessage", @"voiceMessage", @"chatMessage"];
     for (NSString *key in keys) {
         id msg = [cell valueForKey:key];
@@ -127,7 +145,6 @@ static id extractMessageFromCell(UIView *cell) {
             }
         }
     }
-    // 尝试从 currentContext 获取
     id context = [cell valueForKey:@"currentContext"];
     if (context) {
         for (NSString *key in @[@"message", @"item", @"data"]) {
@@ -165,7 +182,6 @@ static id getMessageFromMenuView(UIView *menuView) {
         }
         current = current.superview;
     }
-    // 直接向上找 Cell
     current = menuView;
     while (current) {
         if ([current isKindOfClass:[UITableViewCell class]] || [current isKindOfClass:[UICollectionViewCell class]]) {
@@ -501,36 +517,7 @@ static void setupStackViewLayoutHook(void) {
     }
     if (!window) return;
 
-    // 递归查找 TableView/CollectionView 中的消息并缓存链接
-    void (^searchAndCache)(UIView *, NSString *) = ^(UIView *view, NSString *targetID) {
-        if ([view isKindOfClass:[UITableView class]]) {
-            for (UITableViewCell *cell in [(UITableView *)view visibleCells]) {
-                id message = [cell valueForKey:@"message"];
-                if (message) {
-                    NSString *currentMsgID = [message valueForKey:@"messageID"];
-                    if ([currentMsgID isEqualToString:targetID]) {
-                        cacheAudioURLForMessage(message);
-                        return;
-                    }
-                }
-            }
-        } else if ([view isKindOfClass:[UICollectionView class]]) {
-            for (UICollectionViewCell *cell in [(UICollectionView *)view visibleCells]) {
-                id message = extractMessageFromCell(cell);
-                if (message) {
-                    NSString *currentMsgID = [message valueForKey:@"messageID"];
-                    if ([currentMsgID isEqualToString:targetID]) {
-                        cacheAudioURLForMessage(message);
-                        return;
-                    }
-                }
-            }
-        }
-        for (UIView *sub in view.subviews) {
-            searchAndCache(sub, targetID);
-        }
-    };
-    searchAndCache(window, msgID);
+    searchAndCacheMessage(window, msgID);
 }
 %end
 
