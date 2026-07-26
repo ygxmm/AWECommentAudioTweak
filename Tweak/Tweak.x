@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 评论区 + 私信语音替换，更多面板固定在 x=240 (最终版)
+// AWECommentAudioTweak - 评论区 + 私信语音替换，更多面板固定在 x=240 (终极修复)
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -26,7 +26,8 @@
 
 @interface AWEIMAudioRecorderView : UIView
 @property (nonatomic, strong) AWEIMRecorderVolumeIncreaseView *volumeIncreaseView;
-@property (nonatomic, assign) BOOL isFinish;
+@property (nonatomic, weak) id delegate;
+- (void)updateLeftTime:(double)time;
 @end
 
 // 关联对象 Key
@@ -385,7 +386,7 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 私信语音替换（关联对象 + 布局强制修正） ==========
+// ========== 私信语音替换（终极方案：修改 updateLeftTime: 的参数） ==========
 
 %hook AWEIMAudioRecordController
 
@@ -396,70 +397,33 @@ static void setupStackViewLayoutHook(void) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
             double realSec = realAudioDuration(path);
             if (realSec > 0) {
-                // 修正 recorder 的 duration
+                // 将真实时长存储到 self，以便 updateLeftTime: 读取
+                objc_setAssociatedObject(self, &kRealDurationKey, @(realSec), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                // 同时尝试修正 recorder（双保险）
                 @try {
                     [recorder setValue:@(realSec) forKey:@"duration"];
-                } @catch (NSException *e) {
-                    @try {
-                        [recorder setValue:@((long long)(realSec * 1000)) forKey:@"duration"];
-                    } @catch (NSException *e2) {}
-                }
-                // 保存真实时长到 self，供气泡生成时使用
-                objc_setAssociatedObject(self, &kRealDurationKey, @(realSec), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                } @catch (NSException *e) {}
             }
             [AWECAUtils showToast:@"私信语音已替换"];
         }
     }
-    BOOL result = %orig;
-    // 清除关联对象，避免污染下次录音
-    objc_setAssociatedObject(self, &kRealDurationKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    return result;
-}
-
-// 生成气泡时，将真实时长传递给气泡视图
-- (id)p_generateAudioBubbleWithPowers:(id)powers totalTime:(double)totalTime {
-    NSNumber *realDuration = objc_getAssociatedObject(self, &kRealDurationKey);
-    if (realDuration) {
-        totalTime = [realDuration doubleValue];
-    }
-    id bubble = %orig;
-    if (realDuration && bubble) {
-        // 将真实时长绑定到气泡视图
-        objc_setAssociatedObject(bubble, &kRealDurationKey, realDuration, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    return bubble;
-}
-
-- (id)p_generateNewAudioBubbleWithPowers:(id)powers totalTime:(double)totalTime {
-    NSNumber *realDuration = objc_getAssociatedObject(self, &kRealDurationKey);
-    if (realDuration) {
-        totalTime = [realDuration doubleValue];
-    }
-    id bubble = %orig;
-    if (realDuration && bubble) {
-        objc_setAssociatedObject(bubble, &kRealDurationKey, realDuration, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    return bubble;
+    return %orig;
 }
 
 %end
 
-// 核心：Hook 气泡视图的 layoutSubviews，每次布局都修正时长标签
+// 核心：Hook AWEIMAudioRecorderView 的 updateLeftTime:，替换传入的时间
 %hook AWEIMAudioRecorderView
 
-- (void)layoutSubviews {
-    %orig;
-    NSNumber *realDuration = objc_getAssociatedObject(self, &kRealDurationKey);
-    if (realDuration) {
-        double realSec = [realDuration doubleValue];
-        AWEIMRecorderVolumeIncreaseView *volView = self.volumeIncreaseView;
-        if (volView && volView.recordTimeLabel && [volView respondsToSelector:@selector(p_getTimeTextWithValue:)]) {
-            NSString *newText = [volView p_getTimeTextWithValue:realSec];
-            if (newText && ![newText isEqualToString:volView.recordTimeLabel.text]) {
-                volView.recordTimeLabel.text = newText;
-            }
+- (void)updateLeftTime:(double)time {
+    // 尝试从 delegate 获取真实时长
+    if ([self.delegate isKindOfClass:NSClassFromString(@"AWEIMAudioRecordController")]) {
+        NSNumber *realDuration = objc_getAssociatedObject(self.delegate, &kRealDurationKey);
+        if (realDuration) {
+            time = [realDuration doubleValue];
         }
     }
+    %orig;
 }
 
 %end
@@ -475,13 +439,7 @@ static void setupStackViewLayoutHook(void) {
                 [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
                 double realSec = realAudioDuration(path);
                 if (realSec > 0) {
-                    @try {
-                        [recorder setValue:@(realSec) forKey:@"duration"];
-                    } @catch (NSException *e) {
-                        @try {
-                            [recorder setValue:@((long long)(realSec * 1000)) forKey:@"duration"];
-                        } @catch (NSException *e2) {}
-                    }
+                    objc_setAssociatedObject(self, &kRealDurationKey, @(realSec), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
                 }
                 [AWECAUtils showToast:@"格式语音已替换"];
             }
