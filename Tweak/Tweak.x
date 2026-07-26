@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 抖音评论语音 hook + 更多面板按钮固定到 x=240（最终可编译版）
+// AWECommentAudioTweak - 评论区 + 私信语音替换，更多面板按钮固定在 x=240
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -16,7 +16,7 @@ static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
 
-// 查找包含“更多面板”按钮的 AWEBaseElementView
+// ========== 评论区：查找更多面板按钮的父容器 ==========
 static UIView *findMorePanelElementView(UIView *stackView) {
     Class evClass = NSClassFromString(@"AWEBaseElementView");
     if (!evClass) return nil;
@@ -32,7 +32,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// ========== 录音 Hook ==========
+// ========== 评论区：录音后替换音频 ==========
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
@@ -59,7 +59,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 播放缓存 Hook ==========
+// ========== 评论区：播放时缓存 CDN 链接 ==========
 %hook AWECommentAudioPlayerManager
 - (void)playAudioWithVideoModel:(id)videoModel startTime:(double)startTime audioEffectExternInfo:(id)info {
     if (videoModel && [videoModel isKindOfClass:[NSString class]]) {
@@ -75,7 +75,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 长按菜单保存语音 ==========
+// ========== 评论区：长按菜单添加保存语音 ==========
 %hook AWECommentLongPressPanelAdaptar
 - (void)showLongPressPanelWithParam:(id)param config:(id)config showSheetCompletion:(id)showCompletion dismissSheetCompletion:(id)dismissCompletion {
     %orig;
@@ -91,7 +91,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 上传前替换音频 ==========
+// ========== 评论区：上传前替换音频 ==========
 %hook AWECommentAudioUploadManager
 - (void)startUploadAudioWithFilePath:(id)filePath {
     if ([AWECAAudioReplacer shared].enabled && filePath) {
@@ -122,7 +122,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 预览气泡 Hook ==========
+// ========== 评论区：预览气泡替换音频 ==========
 static void (*orig_generateAudioPreviewBubble)(id, SEL, id);
 static void hook_generateAudioPreviewBubble(id self, SEL _cmd, id recordedModel) {
     if (recordedModel && [AWECAAudioReplacer shared].enabled) {
@@ -149,7 +149,7 @@ static void setupAudioInputElementHook(void) {
     }
 }
 
-// ========== AI 按钮、语音布局等完整实现 ==========
+// ========== 评论区：AI 按钮布局更新 ==========
 static void aweca_updateAIButtonPosition(UIView *stackView) {
     UIView *aiContainer = [stackView viewWithTag:19528];
     if (!aiContainer) return;
@@ -321,20 +321,17 @@ static void setupAudioIconElementHook(void) {
     }
 }
 
-// ========== 核心：每次布局都移动“更多面板”按钮 ==========
+// ========== 评论区：StackView 布局 Hook，移动更多面板按钮到 x=240 ==========
 static void (*orig_stackViewLayoutSubviews)(id self, SEL _cmd);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     orig_stackViewLayoutSubviews(self, _cmd);
-
     UIView *stackView = (UIView *)self;
     if (!stackView.window) return;
 
-    // 处理 AI 按钮（如果存在）
     if ([stackView viewWithTag:19528]) {
         aweca_updateAIButtonPosition(stackView);
     }
 
-    // 移动“更多面板”所在的 AWEBaseElementView 到 x=240
     UIView *moreElementView = findMorePanelElementView(stackView);
     if (moreElementView && moreElementView.frame.origin.x != 240) {
         CGRect frame = moreElementView.frame;
@@ -353,6 +350,60 @@ static void setupStackViewLayoutHook(void) {
         method_setImplementation(method, (IMP)hook_stackViewLayoutSubviews);
     }
 }
+
+// ========== 私信语音替换 ==========
+
+%hook AWEIMAudioRecordController
+- (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
+    if (success && [AWECAAudioReplacer shared].enabled) {
+        NSString *filePath = self.recordFilePath;
+        if (filePath.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
+            [[AWECAAudioReplacer shared] replaceAudioAtPath:filePath];
+            [AWECAUtils showToast:@"私信语音已替换"];
+        }
+    }
+    %orig;
+}
+
+- (BOOL)sendRecordMessageIfNeededWithFilePath:(id)filePath audioRecorder:(id)recorder {
+    if ([AWECAAudioReplacer shared].enabled && filePath) {
+        NSString *path = (NSString *)filePath;
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
+        }
+    }
+    return %orig;
+}
+%end
+
+%hook AWEIMFormatAudioRecordController
+- (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
+    if (success && [AWECAAudioReplacer shared].enabled) {
+        NSString *filePath = nil;
+        if ([recorder respondsToSelector:@selector(url)]) {
+            filePath = [[recorder valueForKey:@"url"] path];
+        }
+        if (filePath.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
+            [[AWECAAudioReplacer shared] replaceAudioAtPath:filePath];
+            [AWECAUtils showToast:@"格式语音已替换"];
+        }
+    }
+    %orig;
+}
+
+- (BOOL)sendRecordMessageIfNeededWithData:(id)data audioRecorder:(id)recorder {
+    if ([AWECAAudioReplacer shared].enabled && [recorder respondsToSelector:@selector(url)]) {
+        NSURL *url = [recorder valueForKey:@"url"];
+        if (url) {
+            NSString *path = url.path;
+            if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+                [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
+            }
+        }
+    }
+    return %orig;
+}
+%end
 
 // ========== 启动入口 ==========
 %ctor {
