@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（原生风格菜单项，精确复刻）
+// AWECommentAudioTweak - 全功能最终版（群聊菜单修复）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -476,8 +476,26 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 私信菜单注入（原生尺寸，修改现有 Cell 的图标和文字） ==========
+// ========== 私信菜单注入（高度加倍，两行显示） ==========
 %hook AWEIMEmojiReplyMenuView
+
+- (void)layoutSubviews {
+    %orig;
+    for (UIView *sub in self.subviews) {
+        if ([sub isKindOfClass:[UICollectionView class]]) {
+            UICollectionView *cv = (UICollectionView *)sub;
+            CGRect frame = cv.frame;
+            if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+                frame.size.height = 146; // 加倍显示两行
+            } else {
+                frame.size.height = 73; // 恢复原始高度
+            }
+            cv.frame = frame;
+            break;
+        }
+    }
+}
+
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
     if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
@@ -485,26 +503,25 @@ static void setupStackViewLayoutHook(void) {
     }
     return originalCount;
 }
+
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
         cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-        
-        // 遍历 Cell 内的子视图，找到原生的 UIImageView 和 UILabel 并修改它们
         for (UIView *sub in cell.subviews) {
             for (UIView *inner in sub.subviews) {
                 if ([inner isKindOfClass:[UIImageView class]]) {
                     UIImageView *imageView = (UIImageView *)inner;
-                    imageView.frame = CGRectMake(13, 8, 24, 24); // 与你提供的原生尺寸一致
+                    imageView.frame = CGRectMake(13, 8, 24, 24);
                     NSString *iconName = (indexPath.item == originalCount) ? @"arrow.down.circle" : @"gearshape";
                     UIImage *icon = [UIImage systemImageNamed:iconName];
                     imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
                 }
                 if ([inner isKindOfClass:[UILabel class]]) {
                     UILabel *label = (UILabel *)inner;
-                    label.frame = CGRectMake(0, 36, 50, 15); // 与你提供的原生尺寸一致
-                    label.font = [UIFont systemFontOfSize:12]; // 原生 12pt
+                    label.frame = CGRectMake(0, 36, 50, 15);
+                    label.font = [UIFont systemFontOfSize:12];
                     label.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
                     label.text = (indexPath.item == originalCount) ? @"下载" : @"设置";
                     label.textAlignment = NSTextAlignmentCenter;
@@ -516,6 +533,7 @@ static void setupStackViewLayoutHook(void) {
     }
     return %orig;
 }
+
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
@@ -525,22 +543,16 @@ static void setupStackViewLayoutHook(void) {
     }
     %orig;
 }
+
 %end
 
-// ========== 群聊菜单注入（原生风格，两列并排） ==========
+// ========== 群聊菜单注入（修复消息获取，原生布局） ==========
 %hook AFDHoverableContainerView
 - (void)didMoveToSuperview {
     %orig;
-    if (self.superview && !g_lastLongPressedMessage) {
-        UIView *view = self.superview;
-        while (view) {
-            if ([view isKindOfClass:[UITableViewCell class]] || [view isKindOfClass:[UICollectionViewCell class]]) {
-                id msg = extractMessageFromCell(view);
-                if (msg) { g_lastLongPressedMessage = msg; break; }
-            }
-            view = view.superview;
-        }
-        if (!g_lastLongPressedMessage) g_lastLongPressedMessage = getMessageFromMenuView(self);
+    if (self.superview) {
+        // 每次菜单显示时重新获取消息对象
+        g_lastLongPressedMessage = getMessageFromMenuView(self);
     }
 }
 
@@ -552,7 +564,6 @@ static void setupStackViewLayoutHook(void) {
     if (!message) message = getMessageFromMenuView(self);
     if (!message || ![message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return;
 
-    // 寻找菜单内容区域，通常是一个 UICollectionView 或内部大 UIView
     UIView *contentArea = nil;
     for (UIView *sub in self.subviews) {
         if ([sub isKindOfClass:[UICollectionView class]]) {
@@ -560,20 +571,11 @@ static void setupStackViewLayoutHook(void) {
             break;
         }
     }
-    if (!contentArea) {
-        for (UIView *sub in self.subviews) {
-            if (sub.frame.size.height > self.bounds.size.height * 0.5 && sub.frame.size.width > 60) {
-                contentArea = sub;
-                break;
-            }
-        }
-    }
     if (!contentArea) contentArea = self;
 
     CGFloat y = contentArea.frame.origin.y + contentArea.frame.size.height + 4;
     CGFloat centerX = self.bounds.size.width / 2;
 
-    // 创建下载按钮（上图标24x24，下文字50x15，字体12）
     UIView *downloadItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
     downloadItem.tag = 30001;
     downloadItem.center = CGPointMake(centerX - 40, y + 25);
@@ -594,7 +596,6 @@ static void setupStackViewLayoutHook(void) {
     [downloadItem addGestureRecognizer:tap1];
     [self addSubview:downloadItem];
 
-    // 创建设置按钮（样式同上）
     UIView *settingsItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
     settingsItem.tag = 30002;
     settingsItem.center = CGPointMake(centerX + 40, y + 25);
