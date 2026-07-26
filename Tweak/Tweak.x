@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（群聊菜单高度修复，完整显示两行）
+// AWECommentAudioTweak - 全功能最终版（群聊菜单高度强制适配内容）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -599,7 +599,7 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 群聊菜单注入（修复高度为 contentSize，完整显示两行） ==========
+// ========== 群聊菜单注入（强制设置 UICollectionView 高度为内容高度 + 关闭滚动） ==========
 %hook AFDHoverableContainerView
 - (void)didMoveToSuperview {
     %orig;
@@ -613,13 +613,16 @@ static void setupStackViewLayoutHook(void) {
 }
 
 - (void)layoutSubviews {
-    // 先调整内部 UICollectionView 的高度，使其等于其内容高度（contentSize.height）
+    // 找到内部的 UICollectionView 并强制调整高度为内容高度，同时禁用滚动和裁剪
     for (UIView *sub in self.subviews) {
         if ([sub isKindOfClass:[UICollectionView class]]) {
             UICollectionView *cv = (UICollectionView *)sub;
+            cv.scrollEnabled = NO;
+            cv.clipsToBounds = NO;
+            // 关闭自动布局，以便直接设置 frame 生效
+            cv.translatesAutoresizingMaskIntoConstraints = YES;
             CGRect frame = cv.frame;
             CGFloat contentH = cv.contentSize.height;
-            // 如果内容高度大于当前高度，则扩展到内容高度，否则保持原高度（至少为 73）
             if (contentH > frame.size.height) {
                 frame.size.height = contentH;
                 cv.frame = frame;
