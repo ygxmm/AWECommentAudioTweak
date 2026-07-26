@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（原生菜单下载 & 设置）
+// AWECommentAudioTweak - 全功能最终版（私信下载与评论区完全一致，颜色修正）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -12,7 +12,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
-// 私信相关类声明
+// 私信类声明
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
 @end
@@ -24,7 +24,6 @@
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
 
-// 关键：完整的 AWEIMEmojiReplyMenuView 声明，包含协议和集合视图属性
 @interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
 @property (nonatomic, strong) UICollectionView *collectionView;
 @end
@@ -295,7 +294,6 @@ static void setupStackViewLayoutHook(void) {
 
 // ========== 私信语音时长修正 ==========
 %hook AWEIMAudioRecordController
-
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
         NSString *filePath = self.recordFilePath;
@@ -306,8 +304,7 @@ static void setupStackViewLayoutHook(void) {
                 @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
                 id engineRecorder = [recorder valueForKey:@"recorder"];
                 if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
-                    AWEIMAudioEnginRecorder *engine = (AWEIMAudioEnginRecorder *)engineRecorder;
-                    [engine setCurrentTime:realSec];
+                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
                 }
             }
             [AWECAUtils showToast:@"私信语音已替换"];
@@ -315,7 +312,6 @@ static void setupStackViewLayoutHook(void) {
     }
     %orig;
 }
-
 - (BOOL)sendRecordMessageIfNeededWithFilePath:(id)filePath audioRecorder:(id)recorder {
     if ([AWECAAudioReplacer shared].enabled && filePath) {
         NSString *path = (NSString *)filePath;
@@ -326,8 +322,7 @@ static void setupStackViewLayoutHook(void) {
                 @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
                 id engineRecorder = [recorder valueForKey:@"recorder"];
                 if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
-                    AWEIMAudioEnginRecorder *engine = (AWEIMAudioEnginRecorder *)engineRecorder;
-                    [engine setCurrentTime:realSec];
+                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
                 }
             }
         }
@@ -347,8 +342,7 @@ static void setupStackViewLayoutHook(void) {
                 @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
                 id engineRecorder = [recorder valueForKey:@"recorder"];
                 if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
-                    AWEIMAudioEnginRecorder *engine = (AWEIMAudioEnginRecorder *)engineRecorder;
-                    [engine setCurrentTime:realSec];
+                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
                 }
             }
             [AWECAUtils showToast:@"格式语音已替换"];
@@ -366,8 +360,7 @@ static void setupStackViewLayoutHook(void) {
                 @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
                 id engineRecorder = [recorder valueForKey:@"recorder"];
                 if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
-                    AWEIMAudioEnginRecorder *engine = (AWEIMAudioEnginRecorder *)engineRecorder;
-                    [engine setCurrentTime:realSec];
+                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
                 }
             }
         }
@@ -378,9 +371,10 @@ static void setupStackViewLayoutHook(void) {
 
 // ========== 私信原生菜单注入（下载 & 设置） ==========
 
+// 下载：缓存链接 + 弹出评论区同款对话框
 static void doDownloadVoice(id menuView) {
     id message = [menuView valueForKey:@"message"];
-    if (!message) return;
+    if (!message) { [AWECAUtils showToast:@"未找到语音消息"]; return; }
 
     NSString *audioURL = nil;
     NSNumber *durationMs = nil;
@@ -392,33 +386,49 @@ static void doDownloadVoice(id menuView) {
         }
         durationMs = [content valueForKey:@"duration"];
     }
+    if (!audioURL.length) { [AWECAUtils showToast:@"未获取到音频链接"]; return; }
 
-    if (!audioURL.length) {
-        [AWECAUtils showToast:@"未获取到音频链接"];
+    // 生成唯一 vID 并缓存链接（与评论区一致）
+    NSString *vID = [NSString stringWithFormat:@"im_voice_%@", @([[NSDate date] timeIntervalSince1970])];
+    [[AWECADownloadManager shared] cacheURL:audioURL forVID:vID];
+
+    // 构造 AWECommentModel
+    Class commentClass = NSClassFromString(@"AWECommentModel");
+    Class audioClass = NSClassFromString(@"AWECommentAudioModel");
+    if (!commentClass || !audioClass) {
+        // 保底分享
+        NSURL *url = [NSURL URLWithString:audioURL];
+        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+        [[AWECAUtils topViewController] presentViewController:share animated:YES completion:nil];
         return;
     }
 
-    NSString *fakeVID = [NSString stringWithFormat:@"im_voice_%@", @([[NSDate date] timeIntervalSince1970])];
-    [[AWECADownloadManager shared] cacheURL:audioURL forVID:fakeVID];
+    id commentModel = [[commentClass alloc] init];
+    id audioModel = [[audioClass alloc] init];
 
-    id commentModel = [[NSClassFromString(@"AWECommentModel") alloc] init];
-    if (!commentModel) return;
+    // 评论区 AudioModel 的属性通常是 vID / playURL / duration
+    @try {
+        [audioModel setValue:vID forKey:@"vID"];
+        [audioModel setValue:durationMs ?: @(0) forKey:@"duration"];
+        // 备用：部分版本可能使用 playURL
+        [audioModel setValue:audioURL forKey:@"playURL"];
+        [commentModel setValue:audioModel forKey:@"audioModel"];
+        [commentModel setValue:vID forKey:@"commentID"];
+    } @catch (NSException *e) {
+        // 构造失败则分享
+        NSURL *url = [NSURL URLWithString:audioURL];
+        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+        [[AWECAUtils topViewController] presentViewController:share animated:YES completion:nil];
+        return;
+    }
 
-    id audioModel = [[NSClassFromString(@"AWECommentAudioModel") alloc] init];
-    if (!audioModel) return;
-
-    [audioModel setValue:fakeVID forKey:@"vID"];
-    if (durationMs) [audioModel setValue:durationMs forKey:@"duration"];
-    else [audioModel setValue:@(0) forKey:@"duration"];
-    [commentModel setValue:audioModel forKey:@"audioModel"];
-    [commentModel setValue:fakeVID forKey:@"commentID"];
-
+    // 调用下载管理器
     [[AWECADownloadManager shared] showSaveDialogAndDownload:commentModel];
 }
 
+// 语音设置
 static void doVoiceSettings(id menuView) {
-    UIViewController *vc = [AWECAUtils topViewController];
-    [[AWECAAudioPickerController shared] showPickerFromViewController:vc];
+    [[AWECAAudioPickerController shared] showPickerFromViewController:[AWECAUtils topViewController]];
 }
 
 %hook AWEIMEmojiReplyMenuView
@@ -436,27 +446,21 @@ static void doVoiceSettings(id menuView) {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
+        // 颜色修正为浅灰（与原生菜单一致）
+        cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
         for (UIView *sub in cell.subviews) {
             for (UIView *inner in sub.subviews) {
                 if ([inner isKindOfClass:[UIImageView class]]) {
                     UIImageView *imageView = (UIImageView *)inner;
-                    if (indexPath.item == originalCount) {
-                        UIImage *icon = [UIImage systemImageNamed:@"arrow.down.circle"];
-                        if (icon) imageView.image = icon;
-                    } else {
-                        UIImage *icon = [UIImage systemImageNamed:@"gearshape"];
-                        if (icon) imageView.image = icon;
-                    }
+                    UIImage *icon = (indexPath.item == originalCount) ? [UIImage systemImageNamed:@"arrow.down.circle"]
+                                                                      : [UIImage systemImageNamed:@"gearshape"];
+                    if (icon) imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
                 }
                 if ([inner isKindOfClass:[UILabel class]]) {
                     UILabel *label = (UILabel *)inner;
-                    if (indexPath.item == originalCount) {
-                        label.text = @"下载";
-                        cell.accessibilityLabel = @"下载";
-                    } else {
-                        label.text = @"设置";
-                        cell.accessibilityLabel = @"设置";
-                    }
+                    label.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+                    label.text = (indexPath.item == originalCount) ? @"下载" : @"设置";
+                    cell.accessibilityLabel = label.text;
                 }
             }
         }
