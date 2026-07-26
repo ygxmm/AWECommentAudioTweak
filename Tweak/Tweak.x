@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 评论区 + 私信语音替换，更多面板按钮固定在 x=240
+// AWECommentAudioTweak - 评论区 + 私信语音替换，更多面板按钮固定在 x=240（最终完整版）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -9,11 +9,11 @@
 #import "AWECATTSController.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <AVFoundation/AVFoundation.h>
 
 // 私信相关类声明
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
-@property (nonatomic, weak) UIView *audioInputView;
 @end
 
 @interface AWEIMFormatAudioRecordController : NSObject
@@ -24,6 +24,18 @@ static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
+static double realAudioDuration(NSString *filePath);
+
+// 使用 AVURLAsset 获取真实音频时长
+static double realAudioDuration(NSString *filePath) {
+    NSURL *url = [NSURL fileURLWithPath:filePath];
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+    CMTime time = asset.duration;
+    if (CMTIME_IS_VALID(time)) {
+        return CMTimeGetSeconds(time);
+    }
+    return 0.0;
+}
 
 // 评论区：查找更多面板按钮的父容器
 static UIView *findMorePanelElementView(UIView *stackView) {
@@ -139,7 +151,7 @@ static void hook_generateAudioPreviewBubble(id self, SEL _cmd, id recordedModel)
         if (audioPath.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:audioPath]) {
             BOOL ok = [[AWECAAudioReplacer shared] replaceAudioAtPath:audioPath];
             if (ok) {
-                double realDur = [AWECAUtils audioDurationAtPath:audioPath];
+                double realDur = realAudioDuration(audioPath);
                 long long realMs = (long long)(realDur * 1000);
                 [recordedModel setValue:@(realMs) forKey:@"duration"];
             }
@@ -360,24 +372,17 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 私信语音替换（最终修复：在自动发送方法中替换文件并修正时长） ==========
+// ========== 私信语音替换（最终方案） ==========
 
 %hook AWEIMAudioRecordController
-
-- (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
-    // 不在此处替换文件，仅保留原始逻辑（录音完成）
-    %orig;
-}
 
 - (BOOL)sendRecordMessageIfNeededWithFilePath:(id)filePath audioRecorder:(id)recorder {
     if ([AWECAAudioReplacer shared].enabled && filePath) {
         NSString *path = (NSString *)filePath;
         if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            // 1. 替换文件
             [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
-            double realSec = [AWECAUtils audioDurationAtPath:path];
+            double realSec = realAudioDuration(path);
             if (realSec > 0) {
-                // 2. 修正 recorder 对象的 duration，确保发送消息时读取真实时长
                 @try {
                     [recorder setValue:@(realSec) forKey:@"duration"];
                 } @catch (NSException *e) {
@@ -392,10 +397,9 @@ static void setupStackViewLayoutHook(void) {
     return %orig;
 }
 
-// 气泡生成时直接传入真实时长（界面显示保障）
 - (id)p_generateAudioBubbleWithPowers:(id)powers totalTime:(double)totalTime {
     if ([AWECAAudioReplacer shared].enabled && self.recordFilePath.length > 0) {
-        double realSec = [AWECAUtils audioDurationAtPath:self.recordFilePath];
+        double realSec = realAudioDuration(self.recordFilePath);
         if (realSec > 0) totalTime = realSec;
     }
     return %orig;
@@ -403,7 +407,7 @@ static void setupStackViewLayoutHook(void) {
 
 - (id)p_generateNewAudioBubbleWithPowers:(id)powers totalTime:(double)totalTime {
     if ([AWECAAudioReplacer shared].enabled && self.recordFilePath.length > 0) {
-        double realSec = [AWECAUtils audioDurationAtPath:self.recordFilePath];
+        double realSec = realAudioDuration(self.recordFilePath);
         if (realSec > 0) totalTime = realSec;
     }
     return %orig;
@@ -413,10 +417,6 @@ static void setupStackViewLayoutHook(void) {
 
 %hook AWEIMFormatAudioRecordController
 
-- (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
-    %orig;
-}
-
 - (BOOL)sendRecordMessageIfNeededWithData:(id)data audioRecorder:(id)recorder {
     if ([AWECAAudioReplacer shared].enabled && [recorder respondsToSelector:@selector(url)]) {
         NSURL *url = [recorder valueForKey:@"url"];
@@ -424,7 +424,7 @@ static void setupStackViewLayoutHook(void) {
             NSString *path = url.path;
             if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
                 [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
-                double realSec = [AWECAUtils audioDurationAtPath:path];
+                double realSec = realAudioDuration(path);
                 if (realSec > 0) {
                     @try {
                         [recorder setValue:@(realSec) forKey:@"duration"];
