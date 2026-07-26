@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 评论区 + 私信语音替换，更多面板固定在 x=240 (最终稳定版)
+// AWECommentAudioTweak - 评论区 + 私信语音替换，更多面板固定在 x=240 (终极完整版)
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -22,7 +22,11 @@
 
 @interface AWEIMRecorderVolumeIncreaseView : UIView
 @property (nonatomic, strong) UILabel *recordTimeLabel;
-- (void)updateWithViewWithMachineState:(unsigned long long)state leftTime:(double)leftTime;
+- (NSString *)p_getTimeTextWithValue:(double)value;
+@end
+
+@interface AWEIMAudioRecorderView : UIView
+@property (nonatomic, strong) AWEIMRecorderVolumeIncreaseView *volumeIncreaseView;
 @end
 
 // 前置声明
@@ -378,7 +382,7 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 私信语音替换（最终修复） ==========
+// ========== 私信语音替换（终极版：直接修改气泡标签） ==========
 
 %hook AWEIMAudioRecordController
 
@@ -396,15 +400,6 @@ static void setupStackViewLayoutHook(void) {
                         [recorder setValue:@((long long)(realSec * 1000)) forKey:@"duration"];
                     } @catch (NSException *e2) {}
                 }
-                // 强制更新录音界面上的时间显示
-                UIView *audioView = self.audioInputView;
-                for (UIView *subview in audioView.subviews) {
-                    if ([subview isKindOfClass:NSClassFromString(@"AWEIMRecorderVolumeIncreaseView")]) {
-                        AWEIMRecorderVolumeIncreaseView *volView = (AWEIMRecorderVolumeIncreaseView *)subview;
-                        [volView updateWithViewWithMachineState:0 leftTime:realSec];
-                        break;
-                    }
-                }
             }
             [AWECAUtils showToast:@"私信语音已替换"];
         }
@@ -412,6 +407,7 @@ static void setupStackViewLayoutHook(void) {
     return %orig;
 }
 
+// 核心：生成气泡后直接修改显示时长的标签
 - (id)p_generateAudioBubbleWithPowers:(id)powers totalTime:(double)totalTime {
     double realSec = 0;
     if ([AWECAAudioReplacer shared].enabled && self.recordFilePath.length > 0) {
@@ -419,13 +415,11 @@ static void setupStackViewLayoutHook(void) {
         if (realSec > 0) totalTime = realSec;
     }
     id bubble = %orig;
-    if (realSec > 0) {
-        @try {
-            [bubble setValue:@(realSec) forKey:@"duration"];
-        } @catch (NSException *e) {
-            @try {
-                [bubble setValue:@((long long)(realSec * 1000)) forKey:@"duration"];
-            } @catch (NSException *e2) {}
+    if (realSec > 0 && [bubble isKindOfClass:NSClassFromString(@"AWEIMAudioRecorderView")]) {
+        AWEIMAudioRecorderView *recorderView = (AWEIMAudioRecorderView *)bubble;
+        AWEIMRecorderVolumeIncreaseView *volView = recorderView.volumeIncreaseView;
+        if (volView && volView.recordTimeLabel) {
+            volView.recordTimeLabel.text = [volView p_getTimeTextWithValue:realSec];
         }
     }
     return bubble;
@@ -438,13 +432,11 @@ static void setupStackViewLayoutHook(void) {
         if (realSec > 0) totalTime = realSec;
     }
     id bubble = %orig;
-    if (realSec > 0) {
-        @try {
-            [bubble setValue:@(realSec) forKey:@"duration"];
-        } @catch (NSException *e) {
-            @try {
-                [bubble setValue:@((long long)(realSec * 1000)) forKey:@"duration"];
-            } @catch (NSException *e2) {}
+    if (realSec > 0 && [bubble isKindOfClass:NSClassFromString(@"AWEIMAudioRecorderView")]) {
+        AWEIMAudioRecorderView *recorderView = (AWEIMAudioRecorderView *)bubble;
+        AWEIMRecorderVolumeIncreaseView *volView = recorderView.volumeIncreaseView;
+        if (volView && volView.recordTimeLabel) {
+            volView.recordTimeLabel.text = [volView p_getTimeTextWithValue:realSec];
         }
     }
     return bubble;
