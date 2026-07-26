@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 最终修正版（修改 currentTime）
+// AWECommentAudioTweak - 评论区 + 私信语音替换 + 更多面板固定在 x=240 (终极版)
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -10,21 +10,27 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <AVFoundation/AVFoundation.h>
-#import <UIKit/UIKit.h>
 
+// 私信相关类声明
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
+@end
+
+@interface AWEIMAudioEnginRecorder : NSObject
+- (void)setCurrentTime:(double)currentTime;
 @end
 
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
 
+// 前置声明
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
 static double realAudioDuration(NSString *filePath);
 
+// 获取真实时长
 static double realAudioDuration(NSString *filePath) {
     NSURL *url = [NSURL fileURLWithPath:filePath];
     AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
@@ -33,6 +39,7 @@ static double realAudioDuration(NSString *filePath) {
     return 0.0;
 }
 
+// 评论区：查找更多面板按钮的父容器
 static UIView *findMorePanelElementView(UIView *stackView) {
     Class evClass = NSClassFromString(@"AWEBaseElementView");
     if (!evClass) return nil;
@@ -47,7 +54,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// ========== 评论区功能（保持不变） ==========
+// ========== 评论区：录音后替换音频 ==========
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
@@ -67,6 +74,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
+// ========== 评论区：播放时缓存 CDN 链接 ==========
 %hook AWECommentAudioPlayerManager
 - (void)playAudioWithVideoModel:(id)videoModel startTime:(double)startTime audioEffectExternInfo:(id)info {
     if (videoModel && [videoModel isKindOfClass:[NSString class]])
@@ -80,6 +88,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
+// ========== 评论区：长按菜单添加保存语音 ==========
 %hook AWECommentLongPressPanelAdaptar
 - (void)showLongPressPanelWithParam:(id)param config:(id)config showSheetCompletion:(id)showCompletion dismissSheetCompletion:(id)dismissCompletion {
     %orig;
@@ -91,6 +100,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
+// ========== 评论区：上传前替换音频 ==========
 %hook AWECommentAudioUploadManager
 - (void)startUploadAudioWithFilePath:(id)filePath {
     if ([AWECAAudioReplacer shared].enabled && filePath && [[NSFileManager defaultManager] fileExistsAtPath:(NSString *)filePath])
@@ -109,6 +119,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
+// ========== 评论区：预览气泡替换音频 ==========
 static void (*orig_generateAudioPreviewBubble)(id, SEL, id);
 static void hook_generateAudioPreviewBubble(id self, SEL _cmd, id recordedModel) {
     if (recordedModel && [AWECAAudioReplacer shared].enabled) {
@@ -133,7 +144,7 @@ static void setupAudioInputElementHook(void) {
     }
 }
 
-// AI 按钮布局更新
+// ========== 评论区：AI 按钮布局更新 ==========
 static void aweca_updateAIButtonPosition(UIView *stackView) {
     UIView *aiContainer = [stackView viewWithTag:19528];
     if (!aiContainer) return;
@@ -259,7 +270,7 @@ static void setupAudioIconElementHook(void) {
         class_addMethod(stackClass, @selector(aweca_aiButtonTapped), (IMP)aweca_aiButtonTappedIMP, "v@:");
 }
 
-// StackView 布局 Hook
+// ========== 评论区：StackView 布局 Hook ==========
 static void (*orig_stackViewLayoutSubviews)(id, SEL);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     orig_stackViewLayoutSubviews(self, _cmd);
@@ -280,15 +291,27 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 私信语音替换（修改 AWEIMAudioMessageRecorder 的 currentTime） ==========
+// ========== 私信语音替换（终极修复：直接调用 setCurrentTime:） ==========
 
 %hook AWEIMAudioRecordController
 
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
-        NSString *path = self.recordFilePath;
-        if (path.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
+        NSString *filePath = self.recordFilePath;
+        if (filePath.length && [[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
+            [[AWECAAudioReplacer shared] replaceAudioAtPath:filePath];
+            double realSec = realAudioDuration(filePath);
+            if (realSec > 0) {
+                // 1. 直接修改 recorder (AWEIMAudioMessageRecorder) 的 currentTime
+                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
+                
+                // 2. 获取内层引擎并调用 setCurrentTime: 方法
+                id engineRecorder = [recorder valueForKey:@"recorder"];
+                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
+                    AWEIMAudioEnginRecorder *engine = (AWEIMAudioEnginRecorder *)engineRecorder;
+                    [engine setCurrentTime:realSec];
+                }
+            }
             [AWECAUtils showToast:@"私信语音已替换"];
         }
     }
@@ -300,20 +323,15 @@ static void setupStackViewLayoutHook(void) {
         NSString *path = (NSString *)filePath;
         if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
-
-            // 关键：recorder 是 AWEIMAudioMessageRecorder，直接修改它的 currentTime
             double realSec = realAudioDuration(path);
             if (realSec > 0) {
-                @try {
-                    [recorder setValue:@(realSec) forKey:@"currentTime"];
-                } @catch (NSException *e) {
-                    // 如果 currentTime 是只读的，尝试修改内部 recorder 对象
-                    id innerRecorder = [recorder valueForKey:@"recorder"];
-                    if (innerRecorder) {
-                        @try {
-                            [innerRecorder setValue:@(realSec) forKey:@"currentTime"];
-                        } @catch (NSException *e2) {}
-                    }
+                // 发送前再次确保时长正确
+                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
+                
+                id engineRecorder = [recorder valueForKey:@"recorder"];
+                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
+                    AWEIMAudioEnginRecorder *engine = (AWEIMAudioEnginRecorder *)engineRecorder;
+                    [engine setCurrentTime:realSec];
                 }
             }
         }
@@ -329,6 +347,15 @@ static void setupStackViewLayoutHook(void) {
         NSString *path = [[recorder valueForKey:@"url"] path];
         if (path.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
+            double realSec = realAudioDuration(path);
+            if (realSec > 0) {
+                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
+                id engineRecorder = [recorder valueForKey:@"recorder"];
+                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
+                    AWEIMAudioEnginRecorder *engine = (AWEIMAudioEnginRecorder *)engineRecorder;
+                    [engine setCurrentTime:realSec];
+                }
+            }
             [AWECAUtils showToast:@"格式语音已替换"];
         }
     }
@@ -342,6 +369,11 @@ static void setupStackViewLayoutHook(void) {
             double realSec = realAudioDuration(path);
             if (realSec > 0) {
                 @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
+                id engineRecorder = [recorder valueForKey:@"recorder"];
+                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
+                    AWEIMAudioEnginRecorder *engine = (AWEIMAudioEnginRecorder *)engineRecorder;
+                    [engine setCurrentTime:realSec];
+                }
             }
         }
     }
