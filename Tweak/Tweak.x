@@ -24,6 +24,10 @@
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
 
+// 关键：将 AWEIMEmojiReplyMenuView 声明为 UIView 子类，以便编译器识别
+@interface AWEIMEmojiReplyMenuView : UIView
+@end
+
 // 前置声明
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
@@ -418,7 +422,6 @@ static void doVoiceSettings(id menuView) {
     [[AWECAAudioPickerController shared] showPickerFromViewController:vc];
 }
 
-// Hook 数据源方法，追加两个新菜单项
 %hook AWEIMEmojiReplyMenuView
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
@@ -434,22 +437,17 @@ static void doVoiceSettings(id menuView) {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     
     if (indexPath.item >= originalCount) {
-        // 复用原生 Cell 样式
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
-        
-        // 找到 Cell 内部的 UIImageView 和 UILabel 并修改它们
         for (UIView *sub in cell.subviews) {
             for (UIView *inner in sub.subviews) {
                 if ([inner isKindOfClass:[UIImageView class]]) {
                     UIImageView *imageView = (UIImageView *)inner;
                     if (indexPath.item == originalCount) {
-                        // 下载图标
-                        UIImage *downloadImage = [UIImage systemImageNamed:@"arrow.down.circle"];
-                        if (downloadImage) imageView.image = downloadImage;
+                        UIImage *icon = [UIImage systemImageNamed:@"arrow.down.circle"];
+                        if (icon) imageView.image = icon;
                     } else {
-                        // 设置图标
-                        UIImage *settingsImage = [UIImage systemImageNamed:@"gearshape"];
-                        if (settingsImage) imageView.image = settingsImage;
+                        UIImage *icon = [UIImage systemImageNamed:@"gearshape"];
+                        if (icon) imageView.image = icon;
                     }
                 }
                 if ([inner isKindOfClass:[UILabel class]]) {
@@ -464,16 +462,13 @@ static void doVoiceSettings(id menuView) {
                 }
             }
         }
-        
         return cell;
     }
-    
     return %orig;
 }
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
-    
     if (indexPath.item >= originalCount) {
         if (indexPath.item == originalCount) {
             doDownloadVoice(self);
@@ -482,7 +477,6 @@ static void doVoiceSettings(id menuView) {
         }
         return;
     }
-    
     %orig;
 }
 
