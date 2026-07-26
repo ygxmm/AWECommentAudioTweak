@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（群聊直接下载修复）
+// AWECommentAudioTweak - 全功能最终版（私信+群聊下载 & 设置，编译修复）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -48,6 +48,7 @@ static void doDownloadVoiceFromMenu(id menuView);
 static void doVoiceSettings(id menuView);
 static id getMessageFromMenuView(UIView *menuView);
 static NSString *extractAudioURLFromMessage(id message);
+static id extractMessageFromCell(UIView *cell);
 
 // 群聊按钮回调
 static void aweca_groupDownloadAction(id self, SEL _cmd) { doDownloadVoiceFromMenu(self); }
@@ -95,23 +96,20 @@ static NSString *extractAudioURLFromMessage(id message) {
 // 从 Cell 中尝试提取消息对象（扩展多种可能属性名）
 static id extractMessageFromCell(UIView *cell) {
     if (!cell) return nil;
-    // 常见属性名
     NSArray *keys = @[@"message", @"item", @"model", @"data", @"viewModel", @"audioMessage", @"voiceMessage", @"chatMessage"];
     for (NSString *key in keys) {
         id msg = [cell valueForKey:key];
         if (msg && [msg isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return msg;
         if (msg && [msg respondsToSelector:@selector(content)]) {
-            // 尝试检查 content 是否包含音频资源
             id content = [msg valueForKey:@"content"];
             if (content) {
                 id resUrl = [content valueForKey:@"resourceUrl"];
                 if (resUrl && ([resUrl valueForKey:@"originURLList"] || [resUrl valueForKey:@"url"])) {
-                    return msg; // 只要有资源链接就认为是音频消息
+                    return msg;
                 }
             }
         }
     }
-    // 尝试通过 currentContext
     id context = [cell valueForKey:@"currentContext"];
     if (context) {
         for (NSString *key in @[@"message", @"item", @"data"]) {
@@ -149,7 +147,6 @@ static id getMessageFromMenuView(UIView *menuView) {
         }
         current = current.superview;
     }
-    // 直接向上找 Cell
     current = menuView;
     while (current) {
         if ([current isKindOfClass:[UITableViewCell class]] || [current isKindOfClass:[UICollectionViewCell class]]) {
@@ -303,26 +300,172 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
     }
 }
 
-static void aweca_aiButtonTappedIMP(id self, SEL _cmd) { /* ... */ }
-static void aweca_longPressAudioIconIMP(id self, SEL _cmd, UILongPressGestureRecognizer *gesture) { /* ... */ }
+static void aweca_aiButtonTappedIMP(id self, SEL _cmd) {
+    UIViewController *vc = [AWECAUtils topViewController];
+    AWECATTSController *tts = [[AWECATTSController alloc] init];
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:tts];
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    if (@available(iOS 16.0, *)) {
+        UISheetPresentationController *sheet = nav.sheetPresentationController;
+        if (sheet) {
+            UISheetPresentationControllerDetent *fit = [UISheetPresentationControllerDetent
+                customDetentWithIdentifier:@"ttsCompact" resolver:^CGFloat(id<UISheetPresentationControllerDetentResolutionContext> ctx) { return 256; }];
+            sheet.detents = @[fit, UISheetPresentationControllerDetent.largeDetent];
+            sheet.selectedDetentIdentifier = @"ttsCompact"; sheet.prefersGrabberVisible = YES;
+        }
+    } else if (@available(iOS 15.0, *)) {
+        UISheetPresentationController *sheet = nav.sheetPresentationController;
+        if (sheet) { sheet.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent]; sheet.prefersGrabberVisible = YES; }
+    }
+    [vc presentViewController:nav animated:YES completion:nil];
+}
+
+static void aweca_longPressAudioIconIMP(id self, SEL _cmd, UILongPressGestureRecognizer *gesture) {
+    if (gesture.state != UIGestureRecognizerStateBegan) return;
+    [[AWECAAudioPickerController shared] showPickerFromViewController:[AWECAUtils topViewController]];
+}
+
 static void (*orig_audioIconViewDidLoad)(id self, SEL _cmd);
-static void hook_audioIconViewDidLoad(id self, SEL _cmd) { /* ... */ }
-static void setupAudioIconElementHook(void) { /* ... */ }
+static void hook_audioIconViewDidLoad(id self, SEL _cmd) {
+    orig_audioIconViewDidLoad(self, _cmd);
+    UIView *elementView = [self respondsToSelector:@selector(view)] ? [self performSelector:@selector(view)] : nil;
+    if (!elementView) return;
+    elementView.userInteractionEnabled = YES;
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:elementView action:@selector(aweca_longPressAudioIcon:)];
+    lp.minimumPressDuration = 0.5; [elementView addGestureRecognizer:lp];
+    UIView *redDot = [[UIView alloc] initWithFrame:CGRectMake(elementView.bounds.size.width - 8, 2, 6, 6)];
+    redDot.backgroundColor = [UIColor redColor]; redDot.layer.cornerRadius = 3;
+    redDot.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    redDot.hidden = ![AWECAAudioReplacer shared].enabled; redDot.tag = 19527;
+    [elementView addSubview:redDot];
+    UIView *stackView = elementView.superview;
+    if (!stackView || [stackView viewWithTag:19528]) return;
+    UIView *aiContainer = [[UIView alloc] initWithFrame:CGRectZero];
+    aiContainer.tag = 19528; aiContainer.userInteractionEnabled = YES;
+    [stackView addSubview:aiContainer];
+    UIButton *aiBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightRegular];
+    [aiBtn setImage:[UIImage systemImageNamed:@"icloud.circle" withConfiguration:cfg] forState:UIControlStateNormal];
+    Class themeMgr = NSClassFromString(@"AWEUIThemeManager");
+    aiBtn.tintColor = (themeMgr && [themeMgr isLightTheme]) ? [UIColor blackColor] : [UIColor whiteColor];
+    aiBtn.frame = CGRectMake(0, 0, 24, 24);
+    [aiBtn addTarget:stackView action:@selector(aweca_aiButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+    [aiContainer addSubview:aiBtn];
+}
+
+static void setupAudioIconElementHook(void) {
+    Class cls = NSClassFromString(@"AWECommentInputViewSwiftImpl.CommentAudioIconElement");
+    if (!cls) return;
+    SEL sel = @selector(viewDidLoad);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (m) {
+        orig_audioIconViewDidLoad = (void (*)(id, SEL))method_getImplementation(m);
+        method_setImplementation(m, (IMP)hook_audioIconViewDidLoad);
+    }
+    Class viewClass = NSClassFromString(@"AWEBaseElementView") ?: [UIView class];
+    if (!class_respondsToSelector(viewClass, @selector(aweca_longPressAudioIcon:)))
+        class_addMethod(viewClass, @selector(aweca_longPressAudioIcon:), (IMP)aweca_longPressAudioIconIMP, "v@:@");
+    Class stackClass = NSClassFromString(@"AWEElementStackView") ?: [UIView class];
+    if (!class_respondsToSelector(stackClass, @selector(aweca_aiButtonTapped)))
+        class_addMethod(stackClass, @selector(aweca_aiButtonTapped), (IMP)aweca_aiButtonTappedIMP, "v@:");
+}
 
 // ========== StackView 布局 Hook ==========
 static void (*orig_stackViewLayoutSubviews)(id, SEL);
-static void hook_stackViewLayoutSubviews(id self, SEL _cmd) { /* ... */ }
-static void setupStackViewLayoutHook(void) { /* ... */ }
+static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
+    orig_stackViewLayoutSubviews(self, _cmd);
+    UIView *stackView = (UIView *)self;
+    if (!stackView.window) return;
+    if ([stackView viewWithTag:19528]) aweca_updateAIButtonPosition(stackView);
+    UIView *more = findMorePanelElementView(stackView);
+    if (more && more.frame.origin.x != 240) { CGRect f = more.frame; f.origin.x = 240; more.frame = f; }
+}
+static void setupStackViewLayoutHook(void) {
+    Class cls = NSClassFromString(@"AWEElementStackView");
+    if (!cls) return;
+    SEL sel = @selector(layoutSubviews);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (m) {
+        orig_stackViewLayoutSubviews = (void (*)(id, SEL))method_getImplementation(m);
+        method_setImplementation(m, (IMP)hook_stackViewLayoutSubviews);
+    }
+}
 
 // ========== 私信语音时长修正 ==========
 %hook AWEIMAudioRecordController
-- (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error { /* ... */ }
-- (BOOL)sendRecordMessageIfNeededWithFilePath:(id)filePath audioRecorder:(id)recorder { /* ... */ }
+- (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
+    if (success && [AWECAAudioReplacer shared].enabled) {
+        NSString *filePath = self.recordFilePath;
+        if (filePath.length && [[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
+            [[AWECAAudioReplacer shared] replaceAudioAtPath:filePath];
+            double realSec = realAudioDuration(filePath);
+            if (realSec > 0) {
+                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
+                id engineRecorder = [recorder valueForKey:@"recorder"];
+                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
+                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
+                }
+            }
+            [AWECAUtils showToast:@"私信语音已替换"];
+        }
+    }
+    %orig;
+}
+- (BOOL)sendRecordMessageIfNeededWithFilePath:(id)filePath audioRecorder:(id)recorder {
+    if ([AWECAAudioReplacer shared].enabled && filePath) {
+        NSString *path = (NSString *)filePath;
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
+            double realSec = realAudioDuration(path);
+            if (realSec > 0) {
+                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
+                id engineRecorder = [recorder valueForKey:@"recorder"];
+                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
+                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
+                }
+            }
+        }
+    }
+    return %orig;
+}
 %end
 
 %hook AWEIMFormatAudioRecordController
-- (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error { /* ... */ }
-- (BOOL)sendRecordMessageIfNeededWithData:(id)data audioRecorder:(id)recorder { /* ... */ }
+- (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
+    if (success && [AWECAAudioReplacer shared].enabled) {
+        NSString *path = [[recorder valueForKey:@"url"] path];
+        if (path.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
+            double realSec = realAudioDuration(path);
+            if (realSec > 0) {
+                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
+                id engineRecorder = [recorder valueForKey:@"recorder"];
+                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
+                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
+                }
+            }
+            [AWECAUtils showToast:@"格式语音已替换"];
+        }
+    }
+    %orig;
+}
+- (BOOL)sendRecordMessageIfNeededWithData:(id)data audioRecorder:(id)recorder {
+    if ([AWECAAudioReplacer shared].enabled && [recorder respondsToSelector:@selector(url)]) {
+        NSString *path = [[recorder valueForKey:@"url"] path];
+        if (path.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
+            double realSec = realAudioDuration(path);
+            if (realSec > 0) {
+                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
+                id engineRecorder = [recorder valueForKey:@"recorder"];
+                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
+                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
+                }
+            }
+        }
+    }
+    return %orig;
+}
 %end
 
 // ========== 私信长按菜单回调 ==========
@@ -342,8 +485,43 @@ static void setupStackViewLayoutHook(void) { /* ... */ }
     }
     return originalCount;
 }
-- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath { /* ... */ }
-- (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath { /* ... */ }
+- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
+    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
+    if (indexPath.item >= originalCount) {
+        UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
+        cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+        for (UIView *sub in cell.subviews) {
+            for (UIView *inner in sub.subviews) {
+                if ([inner isKindOfClass:[UIImageView class]]) {
+                    UIImageView *imageView = (UIImageView *)inner;
+                    UIImage *icon = (indexPath.item == originalCount) ? [UIImage systemImageNamed:@"arrow.down.circle"]
+                                                                      : [UIImage systemImageNamed:@"gearshape"];
+                    if (icon) imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+                }
+                if ([inner isKindOfClass:[UILabel class]]) {
+                    UILabel *label = (UILabel *)inner;
+                    label.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+                    label.text = (indexPath.item == originalCount) ? @"下载" : @"设置";
+                    cell.accessibilityLabel = label.text;
+                }
+            }
+        }
+        return cell;
+    }
+    return %orig;
+}
+- (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
+    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
+    if (indexPath.item >= originalCount) {
+        if (indexPath.item == originalCount) {
+            doDownloadVoiceFromMenu(self);
+        } else {
+            doVoiceSettings(self);
+        }
+        return;
+    }
+    %orig;
+}
 %end
 
 // ========== 群聊菜单注入（强化消息获取） ==========
@@ -351,7 +529,6 @@ static void setupStackViewLayoutHook(void) { /* ... */ }
 - (void)didMoveToSuperview {
     %orig;
     if (self.superview && !g_lastLongPressedMessage) {
-        // 菜单即将显示，立即从父视图链查找 Cell 并提取消息对象
         UIView *view = self.superview;
         while (view) {
             if ([view isKindOfClass:[UITableViewCell class]] || [view isKindOfClass:[UICollectionViewCell class]]) {
@@ -363,7 +540,6 @@ static void setupStackViewLayoutHook(void) { /* ... */ }
             }
             view = view.superview;
         }
-        // 如果仍未找到，尝试通过 getMessageFromMenuView 从 TableView/CollectionView 定位
         if (!g_lastLongPressedMessage) {
             g_lastLongPressedMessage = getMessageFromMenuView(self);
         }
@@ -468,7 +644,46 @@ static void downloadFromURL(NSString *urlStr, NSString *savePath) {
     }] resume];
 }
 
-static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc) { /* ... */ }
+static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc) {
+    NSString *baseDir = [AWECAUtils audioSavePath];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *contents = [fm contentsOfDirectoryAtPath:baseDir error:nil];
+    NSMutableArray *folders = [NSMutableArray array];
+    for (NSString *item in contents) {
+        BOOL isDir = NO;
+        NSString *fullPath = [baseDir stringByAppendingPathComponent:item];
+        if ([fm fileExistsAtPath:fullPath isDirectory:&isDir] && isDir) [folders addObject:item];
+    }
+    UIAlertController *picker = [UIAlertController alertControllerWithTitle:@"选择保存位置" message:baseDir preferredStyle:UIAlertControllerStyleActionSheet];
+    [picker addAction:[UIAlertAction actionWithTitle:@"默认目录" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        downloadFromURL(cdnURL, [baseDir stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
+    }]];
+    for (NSString *folder in folders) {
+        [picker addAction:[UIAlertAction actionWithTitle:folder style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            NSString *dir = [baseDir stringByAppendingPathComponent:folder];
+            downloadFromURL(cdnURL, [dir stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
+        }]];
+    }
+    [picker addAction:[UIAlertAction actionWithTitle:@"新建文件夹" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"新建文件夹" message:nil preferredStyle:UIAlertControllerStyleAlert];
+        [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"文件夹名称"; }];
+        [alert addAction:[UIAlertAction actionWithTitle:@"创建并保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            NSString *folderName = alert.textFields.firstObject.text;
+            if (!folderName.length) { [AWECAUtils showToast:@"文件夹名不能为空"]; return; }
+            NSString *newDir = [baseDir stringByAppendingPathComponent:folderName];
+            [fm createDirectoryAtPath:newDir withIntermediateDirectories:YES attributes:nil error:nil];
+            downloadFromURL(cdnURL, [newDir stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [vc presentViewController:alert animated:YES completion:nil];
+    }]];
+    [picker addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    if (picker.popoverPresentationController) {
+        picker.popoverPresentationController.sourceView = vc.view;
+        picker.popoverPresentationController.sourceRect = CGRectMake(vc.view.bounds.size.width / 2, vc.view.bounds.size.height, 0, 0);
+    }
+    [vc presentViewController:picker animated:YES completion:nil];
+}
 
 %ctor {
     [AWECAUtils ensureDirectoriesExist];
