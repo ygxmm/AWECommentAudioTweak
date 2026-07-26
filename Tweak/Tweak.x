@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（TableView 精准抓取 + 下载 & 设置，与评论区完全一致）
+// AWECommentAudioTweak - 全功能最终版（通过长按回调精准抓取消息，下载与评论区完全一致）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -26,10 +26,7 @@
 
 @interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
 @property (nonatomic, strong) UICollectionView *collectionView;
-@end
-
-@interface AWEIMMessageTableView : UITableView
-@property (nonatomic, weak) AWEIMConversationContext *componentContext;
+@property (nonatomic, weak) id message; // 菜单关联的消息，可能不存在，我们通过 Hook 补上
 @end
 
 @interface AWEIMAudioPlaySessionTracker : NSObject
@@ -43,11 +40,12 @@ static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
 static double realAudioDuration(NSString *filePath);
-static id getMessageFromMenuView(UIView *menuView);
 static void cacheAudioURLForMessage(id message);
 static void showSaveDialogForURL(NSString *urlString, NSString *msgID);
 static void downloadFromURL(NSString *urlStr, NSString *savePath);
 static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc);
+static void doDownloadVoice(id menuView);
+static void doVoiceSettings(id menuView);
 
 // 获取真实时长
 static double realAudioDuration(NSString *filePath) {
@@ -70,50 +68,6 @@ static UIView *findMorePanelElementView(UIView *stackView) {
             }
         }
     }
-    return nil;
-}
-
-// 从菜单视图获取消息对象（精准定位）
-static id getMessageFromMenuView(UIView *menuView) {
-    // 1. 先尝试从菜单自身获取 message 属性
-    id message = [menuView valueForKey:@"message"];
-    if (message) return message;
-
-    // 2. 从父视图链查找 AWEIMReusableCommonCell
-    UIView *cell = menuView;
-    while (cell) {
-        if ([cell isKindOfClass:NSClassFromString(@"AWEIMReusableCommonCell")]) {
-            message = [cell valueForKey:@"message"];
-            if (message) return message;
-            break;
-        }
-        cell = cell.superview;
-    }
-
-    // 3. 通过 TableView 精准定位被长按的 Cell
-    UIView *tableView = menuView;
-    while (tableView && ![tableView isKindOfClass:[UITableView class]]) {
-        tableView = tableView.superview;
-    }
-
-    if (tableView && [tableView isKindOfClass:[UITableView class]]) {
-        CGPoint menuCenter = [menuView convertPoint:CGPointMake(menuView.bounds.size.width/2, menuView.bounds.size.height/2) toView:tableView];
-        NSIndexPath *indexPath = [(UITableView *)tableView indexPathForRowAtPoint:menuCenter];
-        if (indexPath) {
-            UITableViewCell *clickedCell = [(UITableView *)tableView cellForRowAtIndexPath:indexPath];
-            if (clickedCell) {
-                message = [clickedCell valueForKey:@"message"];
-                if (message) return message;
-
-                id context = [clickedCell valueForKey:@"currentContext"];
-                if (context) {
-                    message = [context valueForKey:@"message"];
-                    if (message) return message;
-                }
-            }
-        }
-    }
-
     return nil;
 }
 
@@ -443,7 +397,7 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 播放时自动缓存 CDN 链接 ==========
+// ========== 播放时自动缓存 CDN 链接（双保险） ==========
 %hook AWEIMAudioPlaySessionTracker
 
 - (void)beginPlaySessionWithSessionID:(id)sessionID conversationID:(id)convID messageID:(id)msgID audioDurationMs:(long long)durationMs triggerType:(id)triggerType {
@@ -478,10 +432,47 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
+// ========== 关键：在菜单显示前获取消息并缓存链接 ==========
+%hook AWEIMMessageListViewController
+
+- (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
+    %orig;
+    // 将消息对象存储到菜单视图的关联属性中，供下载时使用
+    if (message) {
+        // 缓存链接
+        cacheAudioURLForMessage(message);
+
+        // 同时将消息对象通过 KVC 传递给菜单视图（如果菜单视图存在）
+        UIView *menuView = nil;
+        for (UIView *subview in self.view.subviews) {
+            if ([subview isKindOfClass:NSClassFromString(@"AWEIMEmojiReplyMenuView")]) {
+                menuView = subview;
+                break;
+            }
+        }
+        if (menuView) {
+            @try {
+                [menuView setValue:message forKey:@"message"];
+            } @catch (NSException *e) {}
+        }
+    }
+}
+
+%end
+
 // ========== 私信原生菜单注入（下载 & 设置） ==========
 
 static void doDownloadVoice(id menuView) {
-    id message = getMessageFromMenuView((UIView *)menuView);
+    id message = [menuView valueForKey:@"message"];
+    if (!message) {
+        // 如果菜单上没有 message，尝试从视图链中查找
+        UIView *cell = [(UIView *)menuView superview];
+        while (cell && ![cell isKindOfClass:[UITableViewCell class]] && ![cell isKindOfClass:[UICollectionViewCell class]]) {
+            cell = cell.superview;
+        }
+        if (cell) message = [cell valueForKey:@"message"];
+    }
+
     NSString *msgID = nil;
     NSString *audioURL = nil;
 
@@ -496,12 +487,13 @@ static void doDownloadVoice(id menuView) {
         }
     }
 
+    // 从缓存中获取
     if (!audioURL && msgID) {
         audioURL = [[AWECADownloadManager shared] cachedURLForVID:msgID];
     }
 
     if (!audioURL.length) {
-        [AWECAUtils showToast:@"请先播放该语音以获取下载链接"];
+        [AWECAUtils showToast:@"请先播放该语音或重新长按以获取链接"];
         return;
     }
 
@@ -602,7 +594,15 @@ static void doVoiceSettings(id menuView) {
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
-    id message = getMessageFromMenuView(self);
+    id message = [self valueForKey:@"message"];
+    if (!message) {
+        // 如果菜单上没有 message，尝试从父 Cell 获取
+        UIView *cell = self.superview;
+        while (cell && ![cell isKindOfClass:[UITableViewCell class]] && ![cell isKindOfClass:[UICollectionViewCell class]]) {
+            cell = cell.superview;
+        }
+        if (cell) message = [cell valueForKey:@"message"];
+    }
     if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         return originalCount + 2;
     }
@@ -613,7 +613,8 @@ static void doVoiceSettings(id menuView) {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
-        cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+        cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0]; // 浅灰色，与原生菜单一致
+
         for (UIView *sub in cell.subviews) {
             for (UIView *inner in sub.subviews) {
                 if ([inner isKindOfClass:[UIImageView class]]) {
