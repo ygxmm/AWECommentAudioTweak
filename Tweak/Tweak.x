@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 评论区 + 私信语音替换 + 更多面板固定在 x=240 (弹窗调试版)
+// AWECommentAudioTweak - 弹窗调试版 (修复编译)
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -37,7 +37,7 @@ static double realAudioDuration(NSString *filePath) {
     return 0.0;
 }
 
-// 获取顶层控制器
+// 获取顶层控制器（不依赖 keyWindow）
 static UIViewController *topViewController(void) {
     UIWindow *window = nil;
     for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -46,7 +46,7 @@ static UIViewController *topViewController(void) {
             break;
         }
     }
-    if (!window) window = [UIApplication sharedApplication].keyWindow;
+    if (!window) return nil;
     UIViewController *root = window.rootViewController;
     while (root.presentedViewController) {
         root = root.presentedViewController;
