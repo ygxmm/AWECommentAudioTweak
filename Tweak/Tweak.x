@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（修复编译，精准抓取消息，下载与评论区一致）
+// AWECommentAudioTweak - 全功能最终版（强化抓取，下载不再需要提前播放）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -26,12 +26,11 @@
 
 @interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
 @property (nonatomic, strong) UICollectionView *collectionView;
-@property (nonatomic, weak) id message;
 @end
 
-// 关键：将 AWEIMMessageListViewController 声明为 UIViewController 子类
 @interface AWEIMMessageListViewController : UIViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
+@property (nonatomic, strong) UITableView *tableView;
 @end
 
 @interface AWEIMAudioPlaySessionTracker : NSObject
@@ -51,6 +50,7 @@ static void downloadFromURL(NSString *urlStr, NSString *savePath);
 static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc);
 static void doDownloadVoice(id menuView);
 static void doVoiceSettings(id menuView);
+static id g_lastLongPressedMessage = nil;
 
 // 获取真实时长
 static double realAudioDuration(NSString *filePath) {
@@ -76,7 +76,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// 缓存消息中的音频链接
+// 从消息对象中提取音频 URL 并缓存
 static void cacheAudioURLForMessage(id message) {
     if (!message) return;
     id content = [message valueForKey:@"content"];
@@ -92,11 +92,11 @@ static void cacheAudioURLForMessage(id message) {
     [[AWECADownloadManager shared] cacheURL:urlStr forVID:msgID];
 }
 
-// 递归搜索窗口中的 Cell，根据 messageID 找到对应消息并缓存
-static void searchAndCacheMessage(UIView *view, NSString *msgID) {
-    if (!view || !msgID) return;
-    if ([view isKindOfClass:[UITableViewCell class]] || [view isKindOfClass:[UICollectionViewCell class]]) {
-        id message = [view valueForKey:@"message"];
+// 根据 messageID 在 TableView 中查找并缓存消息
+static void cacheMessageByID(UITableView *tableView, NSString *msgID) {
+    if (!tableView || !msgID) return;
+    for (UITableViewCell *cell in tableView.visibleCells) {
+        id message = [cell valueForKey:@"message"];
         if (message) {
             NSString *currentMsgID = [message valueForKey:@"messageID"];
             if ([currentMsgID isEqualToString:msgID]) {
@@ -104,9 +104,6 @@ static void searchAndCacheMessage(UIView *view, NSString *msgID) {
                 return;
             }
         }
-    }
-    for (UIView *subview in view.subviews) {
-        searchAndCacheMessage(subview, msgID);
     }
 }
 
@@ -420,7 +417,7 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 播放时自动缓存 CDN 链接（双保险） ==========
+// ========== 播放时自动缓存 CDN 链接（直接从 TableView 查找） ==========
 %hook AWEIMAudioPlaySessionTracker
 
 - (void)beginPlaySessionWithSessionID:(id)sessionID conversationID:(id)convID messageID:(id)msgID audioDurationMs:(long long)durationMs triggerType:(id)triggerType {
@@ -435,29 +432,29 @@ static void setupStackViewLayoutHook(void) {
     }
     if (!window) return;
 
-    searchAndCacheMessage(window, msgID);
+    // 递归查找 TableView
+    void (^findAndCache)(UIView *, NSString *) = ^(UIView *view, NSString *targetID) {
+        if ([view isKindOfClass:[UITableView class]]) {
+            cacheMessageByID((UITableView *)view, targetID);
+            return;
+        }
+        for (UIView *sub in view.subviews) {
+            findAndCache(sub, targetID);
+        }
+    };
+    findAndCache(window, msgID);
 }
 
 %end
 
-// ========== 关键：在菜单显示前获取消息并缓存链接 ==========
+// ========== 长按菜单显示前存储消息并缓存链接 ==========
 %hook AWEIMMessageListViewController
 
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
+    g_lastLongPressedMessage = message;
     if (message) {
-        // 缓存链接
         cacheAudioURLForMessage(message);
-
-        // 将消息对象通过 KVC 传递给菜单视图
-        for (UIView *subview in self.view.subviews) {
-            if ([subview isKindOfClass:NSClassFromString(@"AWEIMEmojiReplyMenuView")]) {
-                @try {
-                    [subview setValue:message forKey:@"message"];
-                } @catch (NSException *e) {}
-                break;
-            }
-        }
     }
 }
 
@@ -466,13 +463,17 @@ static void setupStackViewLayoutHook(void) {
 // ========== 私信原生菜单注入（下载 & 设置） ==========
 
 static void doDownloadVoice(id menuView) {
-    id message = [menuView valueForKey:@"message"];
+    id message = g_lastLongPressedMessage;
     if (!message) {
-        UIView *cell = [(UIView *)menuView superview];
-        while (cell && ![cell isKindOfClass:[UITableViewCell class]] && ![cell isKindOfClass:[UICollectionViewCell class]]) {
-            cell = cell.superview;
+        // 备用方式：从菜单视图或父 Cell 获取
+        message = [menuView valueForKey:@"message"];
+        if (!message) {
+            UIView *cell = [(UIView *)menuView superview];
+            while (cell && ![cell isKindOfClass:[UITableViewCell class]] && ![cell isKindOfClass:[UICollectionViewCell class]]) {
+                cell = cell.superview;
+            }
+            if (cell) message = [cell valueForKey:@"message"];
         }
-        if (cell) message = [cell valueForKey:@"message"];
     }
 
     NSString *msgID = nil;
@@ -494,7 +495,7 @@ static void doDownloadVoice(id menuView) {
     }
 
     if (!audioURL.length) {
-        [AWECAUtils showToast:@"请先播放该语音或重新长按以获取链接"];
+        [AWECAUtils showToast:@"请先播放该语音以获取下载链接"];
         return;
     }
 
@@ -595,15 +596,7 @@ static void doVoiceSettings(id menuView) {
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
-    id message = [self valueForKey:@"message"];
-    if (!message) {
-        UIView *cell = self.superview;
-        while (cell && ![cell isKindOfClass:[UITableViewCell class]] && ![cell isKindOfClass:[UICollectionViewCell class]]) {
-            cell = cell.superview;
-        }
-        if (cell) message = [cell valueForKey:@"message"];
-    }
-    if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         return originalCount + 2;
     }
     return originalCount;
