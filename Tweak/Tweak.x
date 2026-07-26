@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（私信下载与评论区完全一致，颜色修正）
+// AWECommentAudioTweak - 全功能最终版（TableView 直接抓消息 + 下载 & 设置）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -28,12 +28,22 @@
 @property (nonatomic, strong) UICollectionView *collectionView;
 @end
 
+@interface AWEIMAudioPlaySessionTracker : NSObject
++ (id)sharedInstance;
+- (void)beginPlaySessionWithSessionID:(id)arg0 conversationID:(id)arg1 messageID:(id)arg2 audioDurationMs:(long long)arg3 triggerType:(id)arg4;
+@end
+
 // 前置声明
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
 static double realAudioDuration(NSString *filePath);
+static id getMessageFromMenuView(UIView *menuView);
+static void cacheAudioURLForMessage(id message);
+static void showSaveDialogForURL(NSString *urlString, NSString *msgID);
+static void downloadFromURL(NSString *urlStr, NSString *savePath);
+static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc);
 
 // 获取真实时长
 static double realAudioDuration(NSString *filePath) {
@@ -57,6 +67,79 @@ static UIView *findMorePanelElementView(UIView *stackView) {
         }
     }
     return nil;
+}
+
+// 从菜单视图获取消息对象
+static id getMessageFromMenuView(UIView *menuView) {
+    // 1. 先尝试从菜单自身获取 message 属性
+    id message = [menuView valueForKey:@"message"];
+    if (message) return message;
+
+    // 2. 从父视图链查找 AWEIMReusableCommonCell
+    UIView *cell = menuView;
+    while (cell) {
+        if ([cell isKindOfClass:NSClassFromString(@"AWEIMReusableCommonCell")]) {
+            break;
+        }
+        cell = cell.superview;
+    }
+
+    if (cell) {
+        message = [cell valueForKey:@"message"];
+        if (message) return message;
+
+        id context = [cell valueForKey:@"currentContext"];
+        if (context) {
+            message = [context valueForKey:@"message"];
+            if (message) return message;
+        }
+    }
+
+    // 3. 从 TableView 中查找
+    UIView *tableView = menuView;
+    while (tableView) {
+        if ([tableView isKindOfClass:[UITableView class]]) {
+            break;
+        }
+        tableView = tableView.superview;
+    }
+
+    if (tableView) {
+        // 获取点击的 Cell 的 IndexPath
+        CGPoint menuCenter = [menuView convertPoint:menuView.center toView:tableView];
+        NSIndexPath *indexPath = [(UITableView *)tableView indexPathForRowAtPoint:menuCenter];
+        if (indexPath) {
+            UITableViewCell *clickedCell = [(UITableView *)tableView cellForRowAtIndexPath:indexPath];
+            if (clickedCell) {
+                message = [clickedCell valueForKey:@"message"];
+                if (message) return message;
+
+                id context = [clickedCell valueForKey:@"currentContext"];
+                if (context) {
+                    message = [context valueForKey:@"message"];
+                    if (message) return message;
+                }
+            }
+        }
+    }
+
+    return nil;
+}
+
+// 缓存消息中的音频链接
+static void cacheAudioURLForMessage(id message) {
+    if (!message) return;
+    id content = [message valueForKey:@"content"];
+    if (!content) return;
+    id resourceUrl = [content valueForKey:@"resourceUrl"];
+    if (!resourceUrl) return;
+    NSString *urlStr = [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
+    if (!urlStr.length) return;
+
+    NSString *msgID = [message valueForKey:@"messageID"];
+    if (!msgID) return;
+
+    [[AWECADownloadManager shared] cacheURL:urlStr forVID:msgID];
 }
 
 // ========== 评论区功能（保持不变） ==========
@@ -369,64 +452,157 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 私信原生菜单注入（下载 & 设置） ==========
+// ========== 播放时自动缓存 CDN 链接 ==========
+%hook AWEIMAudioPlaySessionTracker
 
-// 下载：缓存链接 + 弹出评论区同款对话框
-static void doDownloadVoice(id menuView) {
-    id message = [menuView valueForKey:@"message"];
-    if (!message) { [AWECAUtils showToast:@"未找到语音消息"]; return; }
+- (void)beginPlaySessionWithSessionID:(id)sessionID conversationID:(id)convID messageID:(id)msgID audioDurationMs:(long long)durationMs triggerType:(id)triggerType {
+    %orig;
 
-    NSString *audioURL = nil;
-    NSNumber *durationMs = nil;
-    id content = [message valueForKey:@"content"];
-    if (content) {
-        id resourceUrl = [content valueForKey:@"resourceUrl"];
-        if (resourceUrl) {
-            audioURL = [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
+    UIWindow *window = nil;
+    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (scene.activationState == UISceneActivationStateForegroundActive) {
+            window = scene.windows.firstObject;
+            break;
         }
-        durationMs = [content valueForKey:@"duration"];
     }
-    if (!audioURL.length) { [AWECAUtils showToast:@"未获取到音频链接"]; return; }
+    if (!window) return;
 
-    // 生成唯一 vID 并缓存链接（与评论区一致）
-    NSString *vID = [NSString stringWithFormat:@"im_voice_%@", @([[NSDate date] timeIntervalSince1970])];
-    [[AWECADownloadManager shared] cacheURL:audioURL forVID:vID];
-
-    // 构造 AWECommentModel
-    Class commentClass = NSClassFromString(@"AWECommentModel");
-    Class audioClass = NSClassFromString(@"AWECommentAudioModel");
-    if (!commentClass || !audioClass) {
-        // 保底分享
-        NSURL *url = [NSURL URLWithString:audioURL];
-        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
-        [[AWECAUtils topViewController] presentViewController:share animated:YES completion:nil];
-        return;
-    }
-
-    id commentModel = [[commentClass alloc] init];
-    id audioModel = [[audioClass alloc] init];
-
-    // 评论区 AudioModel 的属性通常是 vID / playURL / duration
-    @try {
-        [audioModel setValue:vID forKey:@"vID"];
-        [audioModel setValue:durationMs ?: @(0) forKey:@"duration"];
-        // 备用：部分版本可能使用 playURL
-        [audioModel setValue:audioURL forKey:@"playURL"];
-        [commentModel setValue:audioModel forKey:@"audioModel"];
-        [commentModel setValue:vID forKey:@"commentID"];
-    } @catch (NSException *e) {
-        // 构造失败则分享
-        NSURL *url = [NSURL URLWithString:audioURL];
-        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
-        [[AWECAUtils topViewController] presentViewController:share animated:YES completion:nil];
-        return;
-    }
-
-    // 调用下载管理器
-    [[AWECADownloadManager shared] showSaveDialogAndDownload:commentModel];
+    void (^searchInView)(UIView *) = ^(UIView *view) {
+        if ([view isKindOfClass:[UITableViewCell class]] || [view isKindOfClass:[UICollectionViewCell class]]) {
+            id message = [view valueForKey:@"message"];
+            if (message) {
+                NSString *currentMsgID = [message valueForKey:@"messageID"];
+                if ([currentMsgID isEqualToString:msgID]) {
+                    cacheAudioURLForMessage(message);
+                    return;
+                }
+            }
+        }
+        for (UIView *subview in view.subviews) {
+            searchInView(subview);
+        }
+    };
+    searchInView(window);
 }
 
-// 语音设置
+%end
+
+// ========== 私信原生菜单注入（下载 & 设置） ==========
+
+static void doDownloadVoice(id menuView) {
+    id message = getMessageFromMenuView((UIView *)menuView);
+    NSString *msgID = nil;
+    NSString *audioURL = nil;
+
+    if (message) {
+        msgID = [message valueForKey:@"messageID"];
+        id content = [message valueForKey:@"content"];
+        if (content) {
+            id resourceUrl = [content valueForKey:@"resourceUrl"];
+            if (resourceUrl) {
+                audioURL = [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
+            }
+        }
+    }
+
+    if (!audioURL && msgID) {
+        audioURL = [[AWECADownloadManager shared] cachedURLForVID:msgID];
+    }
+
+    if (!audioURL.length) {
+        [AWECAUtils showToast:@"请先播放该语音以获取下载链接"];
+        return;
+    }
+
+    showSaveDialogForURL(audioURL, msgID);
+}
+
+static void showSaveDialogForURL(NSString *urlString, NSString *msgID) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *topVC = [AWECAUtils topViewController];
+        if (!topVC) return;
+
+        NSString *defaultName = [NSString stringWithFormat:@"私信语音_%@", msgID ?: @((int)[[NSDate date] timeIntervalSince1970])];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存语音" message:nil preferredStyle:UIAlertControllerStyleAlert];
+        [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+            tf.text = defaultName; tf.placeholder = @"文件名(不含扩展名)"; tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+        }];
+        [alert addAction:[UIAlertAction actionWithTitle:@"保存到默认目录" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            NSString *fileName = alert.textFields.firstObject.text ?: defaultName;
+            downloadFromURL(urlString, [[AWECAUtils audioSavePath] stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"选择文件夹" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            NSString *fileName = alert.textFields.firstObject.text ?: defaultName;
+            showFolderPicker(fileName, urlString, topVC);
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [topVC presentViewController:alert animated:YES completion:nil];
+    });
+}
+
+static void downloadFromURL(NSString *urlStr, NSString *savePath) {
+    [AWECAUtils showToast:@"正在下载..."];
+    NSURL *url = [NSURL URLWithString:urlStr];
+    if (!url) { [AWECAUtils showToast:@"URL 无效"]; return; }
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
+    [[session downloadTaskWithURL:url completionHandler:^(NSURL *tmpFile, NSURLResponse *response, NSError *error) {
+        if (error || !tmpFile) {
+            dispatch_async(dispatch_get_main_queue(), ^{ [AWECAUtils showToast:@"下载失败"]; });
+            return;
+        }
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *dir = [savePath stringByDeletingLastPathComponent];
+        [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        [fm removeItemAtPath:savePath error:nil];
+        BOOL ok = [fm moveItemAtURL:tmpFile toURL:[NSURL fileURLWithPath:savePath] error:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [AWECAUtils showToast: ok ? [NSString stringWithFormat:@"已保存 %@", savePath.lastPathComponent] : @"保存失败"];
+        });
+    }] resume];
+}
+
+static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc) {
+    NSString *baseDir = [AWECAUtils audioSavePath];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *contents = [fm contentsOfDirectoryAtPath:baseDir error:nil];
+    NSMutableArray *folders = [NSMutableArray array];
+    for (NSString *item in contents) {
+        BOOL isDir = NO;
+        NSString *fullPath = [baseDir stringByAppendingPathComponent:item];
+        if ([fm fileExistsAtPath:fullPath isDirectory:&isDir] && isDir) [folders addObject:item];
+    }
+
+    UIAlertController *picker = [UIAlertController alertControllerWithTitle:@"选择保存位置" message:baseDir preferredStyle:UIAlertControllerStyleActionSheet];
+    [picker addAction:[UIAlertAction actionWithTitle:@"默认目录" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        downloadFromURL(cdnURL, [baseDir stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
+    }]];
+    for (NSString *folder in folders) {
+        [picker addAction:[UIAlertAction actionWithTitle:folder style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            NSString *dir = [baseDir stringByAppendingPathComponent:folder];
+            downloadFromURL(cdnURL, [dir stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
+        }]];
+    }
+    [picker addAction:[UIAlertAction actionWithTitle:@"新建文件夹" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"新建文件夹" message:nil preferredStyle:UIAlertControllerStyleAlert];
+        [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"文件夹名称"; }];
+        [alert addAction:[UIAlertAction actionWithTitle:@"创建并保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            NSString *folderName = alert.textFields.firstObject.text;
+            if (!folderName.length) { [AWECAUtils showToast:@"文件夹名不能为空"]; return; }
+            NSString *newDir = [baseDir stringByAppendingPathComponent:folderName];
+            [fm createDirectoryAtPath:newDir withIntermediateDirectories:YES attributes:nil error:nil];
+            downloadFromURL(cdnURL, [newDir stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [vc presentViewController:alert animated:YES completion:nil];
+    }]];
+    [picker addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    if (picker.popoverPresentationController) {
+        picker.popoverPresentationController.sourceView = vc.view;
+        picker.popoverPresentationController.sourceRect = CGRectMake(vc.view.bounds.size.width / 2, vc.view.bounds.size.height, 0, 0);
+    }
+    [vc presentViewController:picker animated:YES completion:nil];
+}
+
 static void doVoiceSettings(id menuView) {
     [[AWECAAudioPickerController shared] showPickerFromViewController:[AWECAUtils topViewController]];
 }
@@ -435,7 +611,7 @@ static void doVoiceSettings(id menuView) {
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
-    id message = [self valueForKey:@"message"];
+    id message = getMessageFromMenuView(self);
     if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         return originalCount + 2;
     }
@@ -446,7 +622,6 @@ static void doVoiceSettings(id menuView) {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
-        // 颜色修正为浅灰（与原生菜单一致）
         cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
         for (UIView *sub in cell.subviews) {
             for (UIView *inner in sub.subviews) {
