@@ -13,13 +13,13 @@
 // 私信相关类声明
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
-@property (nonatomic, weak) UIView<AWEIMAudioInputTouchViewProtocol> *audioInputView;
+@property (nonatomic, weak) UIView *audioInputView;                     // 用 UIView * 避免协议依赖
+- (void)updateRecordTimeLabelWithRealDuration:(double)realSec;          // 声明新增方法
 @end
 
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
 
-// 录音音量视图（用于更新界面时间标签）
 @interface AWEIMRecorderVolumeIncreaseView : UIView
 @property (nonatomic, strong) UILabel *recordTimeLabel;
 - (NSString *)p_getTimeTextWithValue:(double)value;
@@ -366,13 +366,12 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 私信语音替换（核心修复：先替换文件，修正 recorder 时长，并更新界面时间标签） ==========
+// ========== 私信语音替换（核心修复） ==========
 
 %hook AWEIMAudioRecordController
 
-// 更新录音界面时间标签的方法
 - (void)updateRecordTimeLabelWithRealDuration:(double)realSec {
-    UIView<AWEIMAudioInputTouchViewProtocol> *audioView = self.audioInputView;
+    UIView *audioView = self.audioInputView;
     if (!audioView) return;
 
     for (UIView *subview in audioView.subviews) {
@@ -394,28 +393,14 @@ static void setupStackViewLayoutHook(void) {
     if (success && [AWECAAudioReplacer shared].enabled) {
         NSString *filePath = self.recordFilePath;
         if (filePath.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
-            // 1. 替换文件
             [[AWECAAudioReplacer shared] replaceAudioAtPath:filePath];
-
-            // 2. 获取真实时长
             double realSec = [AWECAUtils audioDurationAtPath:filePath];
             if (realSec > 0) {
-                // 2a. 修正 recorder 对象的时长（系统可能从此读取）
-                @try {
-                    [recorder setValue:@(realSec) forKey:@"duration"];
-                } @catch (NSException *e) {
-                    @try {
-                        [recorder setValue:@((long long)(realSec * 1000)) forKey:@"duration"];
-                    } @catch (NSException *e2) {
-                        // 尝试其他常见属性名
-                        @try { [recorder setValue:@(realSec) forKey:@"audioDuration"]; }
-                        @catch (NSException *e3) {
-                            @try { [recorder setValue:@(realSec) forKey:@"recordDuration"]; }
-                            @catch (NSException *e4) {}
-                        }
-                    }
+                @try { [recorder setValue:@(realSec) forKey:@"duration"]; }
+                @catch (NSException *e) {
+                    @try { [recorder setValue:@((long long)(realSec * 1000)) forKey:@"duration"]; }
+                    @catch (NSException *e2) {}
                 }
-                // 2b. 立即更新录音界面显示的时间标签
                 [self updateRecordTimeLabelWithRealDuration:realSec];
             }
             [AWECAUtils showToast:@"私信语音已替换"];
@@ -429,15 +414,12 @@ static void setupStackViewLayoutHook(void) {
         NSString *path = (NSString *)filePath;
         if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
-            // 再次尝试修正 recorder 时长，以防发送时再次读取
             double realSec = [AWECAUtils audioDurationAtPath:path];
             if (realSec > 0) {
-                @try {
-                    [recorder setValue:@(realSec) forKey:@"duration"];
-                } @catch (NSException *e) {
-                    @try {
-                        [recorder setValue:@((long long)(realSec * 1000)) forKey:@"duration"];
-                    } @catch (NSException *e2) {}
+                @try { [recorder setValue:@(realSec) forKey:@"duration"]; }
+                @catch (NSException *e) {
+                    @try { [recorder setValue:@((long long)(realSec * 1000)) forKey:@"duration"]; }
+                    @catch (NSException *e2) {}
                 }
             }
         }
@@ -445,7 +427,6 @@ static void setupStackViewLayoutHook(void) {
     return %orig;
 }
 
-// 双保险：生成气泡时再次修正时长（用于消息列表显示）
 - (id)p_generateAudioBubbleWithPowers:(id)powers totalTime:(double)totalTime {
     id bubble = %orig;
     if ([AWECAAudioReplacer shared].enabled && self.recordFilePath.length > 0) {
