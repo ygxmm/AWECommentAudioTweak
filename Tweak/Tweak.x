@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 弹窗调试版 (修复编译)
+// AWECommentAudioTweak - 最终修正版（修改 currentTime）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -12,7 +12,6 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
-// 私信相关类声明
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
 @end
@@ -20,15 +19,12 @@
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
 
-// 前置声明
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
 static double realAudioDuration(NSString *filePath);
-static UIViewController *topViewController(void);
 
-// 获取真实时长
 static double realAudioDuration(NSString *filePath) {
     NSURL *url = [NSURL fileURLWithPath:filePath];
     AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
@@ -37,24 +33,6 @@ static double realAudioDuration(NSString *filePath) {
     return 0.0;
 }
 
-// 获取顶层控制器（不依赖 keyWindow）
-static UIViewController *topViewController(void) {
-    UIWindow *window = nil;
-    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive) {
-            window = scene.windows.firstObject;
-            break;
-        }
-    }
-    if (!window) return nil;
-    UIViewController *root = window.rootViewController;
-    while (root.presentedViewController) {
-        root = root.presentedViewController;
-    }
-    return root;
-}
-
-// 评论区：查找更多面板按钮的父容器
 static UIView *findMorePanelElementView(UIView *stackView) {
     Class evClass = NSClassFromString(@"AWEBaseElementView");
     if (!evClass) return nil;
@@ -69,7 +47,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// ========== 评论区：录音后替换音频 ==========
+// ========== 评论区功能（保持不变） ==========
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
@@ -89,7 +67,6 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 评论区：播放时缓存 CDN 链接 ==========
 %hook AWECommentAudioPlayerManager
 - (void)playAudioWithVideoModel:(id)videoModel startTime:(double)startTime audioEffectExternInfo:(id)info {
     if (videoModel && [videoModel isKindOfClass:[NSString class]])
@@ -103,7 +80,6 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 评论区：长按菜单添加保存语音 ==========
 %hook AWECommentLongPressPanelAdaptar
 - (void)showLongPressPanelWithParam:(id)param config:(id)config showSheetCompletion:(id)showCompletion dismissSheetCompletion:(id)dismissCompletion {
     %orig;
@@ -115,7 +91,6 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 评论区：上传前替换音频 ==========
 %hook AWECommentAudioUploadManager
 - (void)startUploadAudioWithFilePath:(id)filePath {
     if ([AWECAAudioReplacer shared].enabled && filePath && [[NSFileManager defaultManager] fileExistsAtPath:(NSString *)filePath])
@@ -134,7 +109,6 @@ static UIView *findMorePanelElementView(UIView *stackView) {
 }
 %end
 
-// ========== 评论区：预览气泡替换音频 ==========
 static void (*orig_generateAudioPreviewBubble)(id, SEL, id);
 static void hook_generateAudioPreviewBubble(id self, SEL _cmd, id recordedModel) {
     if (recordedModel && [AWECAAudioReplacer shared].enabled) {
@@ -159,7 +133,7 @@ static void setupAudioInputElementHook(void) {
     }
 }
 
-// ========== 评论区：AI 按钮布局更新 ==========
+// AI 按钮布局更新
 static void aweca_updateAIButtonPosition(UIView *stackView) {
     UIView *aiContainer = [stackView viewWithTag:19528];
     if (!aiContainer) return;
@@ -170,10 +144,7 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
         if (![sub isKindOfClass:evClass]) continue;
         if ([sub viewWithTag:19527]) { audioElement = sub; break; }
     }
-    if (!audioElement) {
-        aiContainer.hidden = YES;
-        aiContainer.alpha = 0.0;
-    }
+    if (!audioElement) { aiContainer.hidden = YES; aiContainer.alpha = 0.0; }
     NSMutableArray *buttons = [NSMutableArray array];
     for (UIView *sub in stackView.subviews) {
         if (![sub isKindOfClass:evClass] || sub.hidden || sub.alpha < 0.01 || sub.frame.size.width == 0) continue;
@@ -208,12 +179,8 @@ static void aweca_updateAIButtonPosition(UIView *stackView) {
     }
     if (hasAudio && audioElement) {
         aiContainer.frame = CGRectMake(160, 0, 24, 24);
-        aiContainer.hidden = NO;
-        aiContainer.alpha = 1.0;
-    } else {
-        aiContainer.hidden = YES;
-        aiContainer.alpha = 0.0;
-    }
+        aiContainer.hidden = NO; aiContainer.alpha = 1.0;
+    } else { aiContainer.hidden = YES; aiContainer.alpha = 0.0; }
     UIButton *aiBtn = nil;
     for (UIView *sub in aiContainer.subviews) if ([sub isKindOfClass:[UIButton class]]) { aiBtn = (UIButton *)sub; break; }
     if (aiBtn) {
@@ -231,18 +198,13 @@ static void aweca_aiButtonTappedIMP(id self, SEL _cmd) {
         UISheetPresentationController *sheet = nav.sheetPresentationController;
         if (sheet) {
             UISheetPresentationControllerDetent *fit = [UISheetPresentationControllerDetent
-                customDetentWithIdentifier:@"ttsCompact"
-                resolver:^CGFloat(id<UISheetPresentationControllerDetentResolutionContext> ctx) { return 256; }];
+                customDetentWithIdentifier:@"ttsCompact" resolver:^CGFloat(id<UISheetPresentationControllerDetentResolutionContext> ctx) { return 256; }];
             sheet.detents = @[fit, UISheetPresentationControllerDetent.largeDetent];
-            sheet.selectedDetentIdentifier = @"ttsCompact";
-            sheet.prefersGrabberVisible = YES;
+            sheet.selectedDetentIdentifier = @"ttsCompact"; sheet.prefersGrabberVisible = YES;
         }
     } else if (@available(iOS 15.0, *)) {
         UISheetPresentationController *sheet = nav.sheetPresentationController;
-        if (sheet) {
-            sheet.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
-            sheet.prefersGrabberVisible = YES;
-        }
+        if (sheet) { sheet.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent]; sheet.prefersGrabberVisible = YES; }
     }
     [vc presentViewController:nav animated:YES completion:nil];
 }
@@ -259,22 +221,17 @@ static void hook_audioIconViewDidLoad(id self, SEL _cmd) {
     if (!elementView) return;
     elementView.userInteractionEnabled = YES;
     UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:elementView action:@selector(aweca_longPressAudioIcon:)];
-    lp.minimumPressDuration = 0.5;
-    [elementView addGestureRecognizer:lp];
-
+    lp.minimumPressDuration = 0.5; [elementView addGestureRecognizer:lp];
     UIView *redDot = [[UIView alloc] initWithFrame:CGRectMake(elementView.bounds.size.width - 8, 2, 6, 6)];
     redDot.backgroundColor = [UIColor redColor]; redDot.layer.cornerRadius = 3;
     redDot.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    redDot.hidden = ![AWECAAudioReplacer shared].enabled;
-    redDot.tag = 19527;
+    redDot.hidden = ![AWECAAudioReplacer shared].enabled; redDot.tag = 19527;
     [elementView addSubview:redDot];
-
     UIView *stackView = elementView.superview;
     if (!stackView || [stackView viewWithTag:19528]) return;
     UIView *aiContainer = [[UIView alloc] initWithFrame:CGRectZero];
     aiContainer.tag = 19528; aiContainer.userInteractionEnabled = YES;
     [stackView addSubview:aiContainer];
-
     UIButton *aiBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightRegular];
     [aiBtn setImage:[UIImage systemImageNamed:@"icloud.circle" withConfiguration:cfg] forState:UIControlStateNormal];
@@ -302,7 +259,7 @@ static void setupAudioIconElementHook(void) {
         class_addMethod(stackClass, @selector(aweca_aiButtonTapped), (IMP)aweca_aiButtonTappedIMP, "v@:");
 }
 
-// ========== 评论区：StackView 布局 Hook ==========
+// StackView 布局 Hook
 static void (*orig_stackViewLayoutSubviews)(id, SEL);
 static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     orig_stackViewLayoutSubviews(self, _cmd);
@@ -310,9 +267,7 @@ static void hook_stackViewLayoutSubviews(id self, SEL _cmd) {
     if (!stackView.window) return;
     if ([stackView viewWithTag:19528]) aweca_updateAIButtonPosition(stackView);
     UIView *more = findMorePanelElementView(stackView);
-    if (more && more.frame.origin.x != 240) {
-        CGRect f = more.frame; f.origin.x = 240; more.frame = f;
-    }
+    if (more && more.frame.origin.x != 240) { CGRect f = more.frame; f.origin.x = 240; more.frame = f; }
 }
 static void setupStackViewLayoutHook(void) {
     Class cls = NSClassFromString(@"AWEElementStackView");
@@ -325,7 +280,7 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 私信语音替换 + 弹窗调试 ==========
+// ========== 私信语音替换（修改 AWEIMAudioMessageRecorder 的 currentTime） ==========
 
 %hook AWEIMAudioRecordController
 
@@ -346,32 +301,21 @@ static void setupStackViewLayoutHook(void) {
         if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
 
-            // 弹窗显示 recorder 属性
-            NSMutableString *info = [NSMutableString string];
-            [info appendFormat:@"Recorder 类名: %@\n\n", NSStringFromClass([recorder class])];
-
-            unsigned int count;
-            objc_property_t *props = class_copyPropertyList([recorder class], &count);
-            for (unsigned int i = 0; i < count; i++) {
-                const char *name = property_getName(props[i]);
-                NSString *propertyName = [NSString stringWithUTF8String:name];
-                id value = [recorder valueForKey:propertyName];
-                [info appendFormat:@"%@ = %@\n", propertyName, value ?: @"nil"];
-            }
-            free(props);
-
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UIViewController *top = topViewController();
-                if (top) {
-                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Recorder 属性" message:info preferredStyle:UIAlertControllerStyleAlert];
-                    [alert addAction:[UIAlertAction actionWithTitle:@"复制" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-                        [[UIPasteboard generalPasteboard] setString:info];
-                        [AWECAUtils showToast:@"已复制，请发给开发者"];
-                    }]];
-                    [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-                    [top presentViewController:alert animated:YES completion:nil];
+            // 关键：recorder 是 AWEIMAudioMessageRecorder，直接修改它的 currentTime
+            double realSec = realAudioDuration(path);
+            if (realSec > 0) {
+                @try {
+                    [recorder setValue:@(realSec) forKey:@"currentTime"];
+                } @catch (NSException *e) {
+                    // 如果 currentTime 是只读的，尝试修改内部 recorder 对象
+                    id innerRecorder = [recorder valueForKey:@"recorder"];
+                    if (innerRecorder) {
+                        @try {
+                            [innerRecorder setValue:@(realSec) forKey:@"currentTime"];
+                        } @catch (NSException *e2) {}
+                    }
                 }
-            });
+            }
         }
     }
     return %orig;
@@ -393,8 +337,13 @@ static void setupStackViewLayoutHook(void) {
 - (BOOL)sendRecordMessageIfNeededWithData:(id)data audioRecorder:(id)recorder {
     if ([AWECAAudioReplacer shared].enabled && [recorder respondsToSelector:@selector(url)]) {
         NSString *path = [[recorder valueForKey:@"url"] path];
-        if (path.length && [[NSFileManager defaultManager] fileExistsAtPath:path])
+        if (path.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
+            double realSec = realAudioDuration(path);
+            if (realSec > 0) {
+                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
+            }
+        }
     }
     return %orig;
 }
