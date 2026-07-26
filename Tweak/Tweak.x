@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（群聊父容器加高，按钮完整显示）
+// AWECommentAudioTweak - 最终稳定版（修复卡死和启动慢）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -35,11 +35,6 @@
 @interface AFDHoverableContainerView : UIView
 @end
 
-@interface AWEIMAudioPlaySessionTracker : NSObject
-+ (id)sharedInstance;
-- (void)beginPlaySessionWithSessionID:(id)arg0 conversationID:(id)arg1 messageID:(id)arg2 audioDurationMs:(long long)arg3 triggerType:(id)arg4;
-@end
-
 // 前置声明
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
@@ -54,8 +49,6 @@ static void doVoiceSettings(id menuView);
 static id getMessageFromMenuView(UIView *menuView);
 static NSString *extractAudioURLFromMessage(id message);
 static id extractMessageFromCell(UIView *cell);
-static void cacheAudioURLForMessage(id message);
-static void searchAndCacheMessage(UIView *view, NSString *targetID);
 
 // 存储最近长按的消息对象
 static id g_lastLongPressedMessage = nil;
@@ -84,7 +77,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// 从消息对象中提取音频 CDN 链接
+// 从消息对象中提取音频 URL
 static NSString *extractAudioURLFromMessage(id message) {
     if (!message) return nil;
     id content = [message valueForKey:@"content"];
@@ -96,93 +89,36 @@ static NSString *extractAudioURLFromMessage(id message) {
     return [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
 }
 
-// 缓存消息中的音频链接
-static void cacheAudioURLForMessage(id message) {
-    if (!message) return;
-    NSString *urlStr = extractAudioURLFromMessage(message);
-    if (!urlStr.length) return;
-    NSString *msgID = [message valueForKey:@"messageID"];
-    if (!msgID) return;
-    [[AWECADownloadManager shared] cacheURL:urlStr forVID:msgID];
-}
-
-// 递归查找并缓存消息（用于播放时缓存）
-static void searchAndCacheMessage(UIView *view, NSString *targetID) {
-    if (!view || !targetID) return;
-    if ([view isKindOfClass:[UITableViewCell class]] || [view isKindOfClass:[UICollectionViewCell class]]) {
-        id message = extractMessageFromCell(view);
-        if (message) {
-            NSString *currentMsgID = [message valueForKey:@"messageID"];
-            if ([currentMsgID isEqualToString:targetID]) {
-                cacheAudioURLForMessage(message);
-                return;
-            }
-        }
-    }
-    for (UIView *subview in view.subviews) {
-        searchAndCacheMessage(subview, targetID);
-    }
-}
-
-// 从 Cell 中尝试提取消息对象（增强版）
+// 从 Cell 中提取消息对象
 static id extractMessageFromCell(UIView *cell) {
     if (!cell) return nil;
-    NSArray *keys = @[@"message", @"item", @"model", @"data", @"viewModel", @"audioMessage", @"voiceMessage", @"chatMessage"];
+    // 优先用 message 属性
+    id msg = [cell valueForKey:@"message"];
+    if (msg && [msg isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return msg;
+    // 然后尝试其他属性
+    NSArray *keys = @[@"item", @"model", @"data", @"audioMessage"];
     for (NSString *key in keys) {
-        id msg = [cell valueForKey:key];
-        if (msg && [msg isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return msg;
-        if (msg && [msg respondsToSelector:@selector(content)]) {
-            id content = [msg valueForKey:@"content"];
-            if (content) {
-                id resUrl = [content valueForKey:@"resourceUrl"];
-                if (resUrl && ([resUrl valueForKey:@"originURLList"] || [resUrl valueForKey:@"url"])) {
-                    return msg;
-                }
-            }
-        }
+        msg = [cell valueForKey:key];
+        if ([msg isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return msg;
     }
+    // 尝试 currentContext
     id context = [cell valueForKey:@"currentContext"];
     if (context) {
-        for (NSString *key in @[@"message", @"item", @"data"]) {
-            id msg = [context valueForKey:key];
-            if ([msg isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return msg;
-        }
+        msg = [context valueForKey:@"message"];
+        if ([msg isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return msg;
     }
     return nil;
 }
 
-// 增强版消息查找（支持 UITableView 和 UICollectionView）
+// 从菜单视图查找消息对象（轻量版，不递归所有子视图）
 static id getMessageFromMenuView(UIView *menuView) {
+    // 直接向上找 Cell
     UIView *current = menuView;
-    while (current) {
-        if ([current isKindOfClass:[UITableView class]]) {
-            UITableView *tv = (UITableView *)current;
-            CGPoint menuCenter = [menuView convertPoint:CGPointMake(menuView.bounds.size.width/2, menuView.bounds.size.height/2) toView:tv];
-            NSIndexPath *indexPath = [tv indexPathForRowAtPoint:menuCenter];
-            if (indexPath) {
-                UITableViewCell *cell = [tv cellForRowAtIndexPath:indexPath];
-                id msg = extractMessageFromCell(cell);
-                if (msg) return msg;
-            }
-            break;
-        } else if ([current isKindOfClass:[UICollectionView class]]) {
-            UICollectionView *cv = (UICollectionView *)current;
-            CGPoint menuCenter = [menuView convertPoint:CGPointMake(menuView.bounds.size.width/2, menuView.bounds.size.height/2) toView:cv];
-            NSIndexPath *indexPath = [cv indexPathForItemAtPoint:menuCenter];
-            if (indexPath) {
-                UICollectionViewCell *cell = [cv cellForItemAtIndexPath:indexPath];
-                id msg = extractMessageFromCell(cell);
-                if (msg) return msg;
-            }
-            break;
-        }
-        current = current.superview;
-    }
-    current = menuView;
     while (current) {
         if ([current isKindOfClass:[UITableViewCell class]] || [current isKindOfClass:[UICollectionViewCell class]]) {
             id msg = extractMessageFromCell(current);
             if (msg) return msg;
+            break;
         }
         current = current.superview;
     }
@@ -499,66 +435,42 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 播放时缓存链接（群聊下载兜底） ==========
-%hook AWEIMAudioPlaySessionTracker
-- (void)beginPlaySessionWithSessionID:(id)sessionID conversationID:(id)convID messageID:(id)msgID audioDurationMs:(long long)durationMs triggerType:(id)triggerType {
-    %orig;
-
-    UIWindow *window = nil;
-    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive) {
-            window = scene.windows.firstObject;
-            break;
-        }
-    }
-    if (!window) return;
-
-    searchAndCacheMessage(window, msgID);
-}
-%end
-
-// ========== 私信长按菜单回调（辅助） ==========
+// ========== 私信长按菜单回调（存储消息对象） ==========
 %hook AWEIMMessageListViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
-    if (message) {
-        g_lastLongPressedMessage = message;
-        cacheAudioURLForMessage(message);
-    }
+    g_lastLongPressedMessage = message;
 }
 %end
 
-// ========== 统一菜单数据源注入（私信和群聊共用） ==========
+// ========== 统一菜单注入（私信和群聊共用） ==========
 %hook AWEIMEmojiReplyMenuView
 
 - (void)layoutSubviews {
     %orig;
-    for (UIView *sub in self.subviews) {
-        if ([sub isKindOfClass:[UICollectionView class]]) {
-            UICollectionView *cv = (UICollectionView *)sub;
-            if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
-                CGFloat contentH = cv.contentSize.height;
-                if (contentH > cv.frame.size.height) {
+    // 如果是语音消息，扩展 UICollectionView 高度并禁用滚动
+    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+        for (UIView *sub in self.subviews) {
+            if ([sub isKindOfClass:[UICollectionView class]]) {
+                UICollectionView *cv = (UICollectionView *)sub;
+                if (cv.contentSize.height > cv.frame.size.height) {
                     CGRect frame = cv.frame;
-                    frame.size.height = contentH;
+                    frame.size.height = cv.contentSize.height;
                     cv.frame = frame;
                 }
                 cv.scrollEnabled = NO;
                 cv.clipsToBounds = NO;
+                break;
             }
-            break;
         }
     }
 }
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
+    // 如果全局变量为空，则尝试从菜单视图获取
     if (!g_lastLongPressedMessage) {
-        id msg = getMessageFromMenuView(self);
-        if (msg) {
-            g_lastLongPressedMessage = msg;
-            cacheAudioURLForMessage(msg);
-        }
+        g_lastLongPressedMessage = getMessageFromMenuView(self);
     }
     if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         return originalCount + 2;
@@ -570,7 +482,9 @@ static void setupStackViewLayoutHook(void) {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
+        // 清空旧内容
         for (UIView *sub in cell.subviews) { [sub removeFromSuperview]; }
+        // 创建原生风格菜单项
         UIView *iconBg = [[UIView alloc] initWithFrame:CGRectMake(1, 4, 48, 48)];
         iconBg.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
         iconBg.layer.cornerRadius = 10;
@@ -607,71 +521,64 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 群聊菜单父容器加高（关键修复） ==========
+// ========== 群聊菜单容器加高（安全版） ==========
 %hook AFDHoverableContainerView
 
 - (void)layoutSubviews {
-    %orig; // 先让原生布局完成
+    %orig;
 
-    // 如果检测到是语音消息，需要扩展容器的高度
-    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
-        // 计算需要增加的高度：按钮区域约 54 点（两个按钮高度 50 + 间距 4）
-        CGFloat extraHeight = 54;
-        CGFloat originalHeight = self.frame.size.height;
-        CGFloat neededHeight = originalHeight + extraHeight;
+    // 只在第一次布局时处理，避免循环
+    if ([self viewWithTag:30001] || !g_lastLongPressedMessage) return;
 
-        // 直接加高父容器
-        CGRect selfFrame = self.frame;
-        selfFrame.size.height = neededHeight;
-        self.frame = selfFrame;
+    if ([g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+        // 增加容器高度
+        CGRect f = self.frame;
+        f.size.height += 54;
+        self.frame = f;
 
-        // 如果没有添加过按钮，则创建下载/设置按钮
-        if (![self viewWithTag:30001]) {
-            CGFloat centerX = self.bounds.size.width / 2;
-            CGFloat y = originalHeight + 4; // 按钮放在原容器底部下方
+        // 添加下载和设置按钮
+        CGFloat centerX = self.bounds.size.width / 2;
+        CGFloat y = self.bounds.size.height - 54 + 4;
 
-            // 下载按钮
-            UIView *downloadItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
-            downloadItem.tag = 30001;
-            downloadItem.center = CGPointMake(centerX - 40, y + 25);
-            UIImageView *downloadIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
-            downloadIcon.image = [[UIImage systemImageNamed:@"arrow.down.circle"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-            downloadIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-            [downloadItem addSubview:downloadIcon];
-            UILabel *downloadLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
-            downloadLabel.text = @"下载";
-            downloadLabel.font = [UIFont systemFontOfSize:12];
-            downloadLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-            downloadLabel.textAlignment = NSTextAlignmentCenter;
-            [downloadItem addSubview:downloadLabel];
-            UITapGestureRecognizer *tap1 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupDownloadAction)];
-            [downloadItem addGestureRecognizer:tap1];
-            [self addSubview:downloadItem];
+        UIView *downloadItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
+        downloadItem.tag = 30001;
+        downloadItem.center = CGPointMake(centerX - 40, y + 25);
+        UIImageView *downloadIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
+        downloadIcon.image = [[UIImage systemImageNamed:@"arrow.down.circle"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+        downloadIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+        [downloadItem addSubview:downloadIcon];
+        UILabel *downloadLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
+        downloadLabel.text = @"下载";
+        downloadLabel.font = [UIFont systemFontOfSize:12];
+        downloadLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+        downloadLabel.textAlignment = NSTextAlignmentCenter;
+        [downloadItem addSubview:downloadLabel];
+        UITapGestureRecognizer *tap1 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupDownloadAction)];
+        [downloadItem addGestureRecognizer:tap1];
+        [self addSubview:downloadItem];
 
-            // 设置按钮
-            UIView *settingsItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
-            settingsItem.tag = 30002;
-            settingsItem.center = CGPointMake(centerX + 40, y + 25);
-            UIImageView *settingsIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
-            settingsIcon.image = [[UIImage systemImageNamed:@"gearshape"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-            settingsIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-            [settingsItem addSubview:settingsIcon];
-            UILabel *settingsLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
-            settingsLabel.text = @"设置";
-            settingsLabel.font = [UIFont systemFontOfSize:12];
-            settingsLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-            settingsLabel.textAlignment = NSTextAlignmentCenter;
-            [settingsItem addSubview:settingsLabel];
-            UITapGestureRecognizer *tap2 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupSettingsAction)];
-            [settingsItem addGestureRecognizer:tap2];
-            [self addSubview:settingsItem];
-        }
+        UIView *settingsItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
+        settingsItem.tag = 30002;
+        settingsItem.center = CGPointMake(centerX + 40, y + 25);
+        UIImageView *settingsIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
+        settingsIcon.image = [[UIImage systemImageNamed:@"gearshape"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+        settingsIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+        [settingsItem addSubview:settingsIcon];
+        UILabel *settingsLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
+        settingsLabel.text = @"设置";
+        settingsLabel.font = [UIFont systemFontOfSize:12];
+        settingsLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+        settingsLabel.textAlignment = NSTextAlignmentCenter;
+        [settingsItem addSubview:settingsLabel];
+        UITapGestureRecognizer *tap2 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupSettingsAction)];
+        [settingsItem addGestureRecognizer:tap2];
+        [self addSubview:settingsItem];
     }
 }
 
 %end
 
-// ========== 群聊按钮回调实现 ==========
+// ========== 群聊按钮回调 ==========
 static void aweca_groupDownloadAction(id self, SEL _cmd) {
     doDownloadVoiceFromMenu(self);
 }
@@ -686,15 +593,8 @@ static void doDownloadVoiceFromMenu(id menuView) {
     if (!message) message = getMessageFromMenuView((UIView *)menuView);
 
     NSString *audioURL = nil;
-    NSString *msgID = nil;
-
     if (message) {
-        msgID = [message valueForKey:@"messageID"];
         audioURL = extractAudioURLFromMessage(message);
-    }
-
-    if (!audioURL.length && msgID) {
-        audioURL = [[AWECADownloadManager shared] cachedURLForVID:msgID];
     }
 
     if (!audioURL.length) {
@@ -702,6 +602,7 @@ static void doDownloadVoiceFromMenu(id menuView) {
         return;
     }
 
+    NSString *msgID = [message valueForKey:@"messageID"];
     showSaveDialogForURL(audioURL, msgID);
 }
 
@@ -791,13 +692,16 @@ static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewControl
 }
 
 %ctor {
-    [AWECAUtils ensureDirectoriesExist];
-    [AWECAAudioReplacer shared];
+    // 延迟初始化，避免启动耗时
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [AWECAUtils ensureDirectoriesExist];
+        [AWECAAudioReplacer shared];
+    });
+
     setupAudioInputElementHook();
     setupAudioIconElementHook();
     setupStackViewLayoutHook();
 
-    // 为群聊菜单容器注入按钮回调方法
     Class hoverClass = NSClassFromString(@"AFDHoverableContainerView");
     if (hoverClass) {
         if (!class_respondsToSelector(hoverClass, @selector(aweca_groupDownloadAction))) {
