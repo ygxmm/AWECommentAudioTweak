@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（强化抓取，下载不再需要提前播放）
+// AWECommentAudioTweak - 全功能最终版（私信下载直接抓URL，无需播放）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -33,9 +33,21 @@
 @property (nonatomic, strong) UITableView *tableView;
 @end
 
-@interface AWEIMAudioPlaySessionTracker : NSObject
-+ (id)sharedInstance;
-- (void)beginPlaySessionWithSessionID:(id)arg0 conversationID:(id)arg1 messageID:(id)arg2 audioDurationMs:(long long)arg3 triggerType:(id)arg4;
+// 私信下载助手单例
+@interface AWECAIMDownloadHelper : NSObject
++ (instancetype)shared;
+@property (nonatomic, strong) id currentMessage;
+@end
+
+@implementation AWECAIMDownloadHelper
++ (instancetype)shared {
+    static AWECAIMDownloadHelper *instance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[AWECAIMDownloadHelper alloc] init];
+    });
+    return instance;
+}
 @end
 
 // 前置声明
@@ -44,13 +56,11 @@ static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
 static double realAudioDuration(NSString *filePath);
-static void cacheAudioURLForMessage(id message);
 static void showSaveDialogForURL(NSString *urlString, NSString *msgID);
 static void downloadFromURL(NSString *urlStr, NSString *savePath);
 static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc);
 static void doDownloadVoice(id menuView);
 static void doVoiceSettings(id menuView);
-static id g_lastLongPressedMessage = nil;
 
 // 获取真实时长
 static double realAudioDuration(NSString *filePath) {
@@ -76,35 +86,14 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// 从消息对象中提取音频 URL 并缓存
-static void cacheAudioURLForMessage(id message) {
-    if (!message) return;
+// 从消息对象中提取音频 URL
+static NSString *extractAudioURLFromMessage(id message) {
+    if (!message) return nil;
     id content = [message valueForKey:@"content"];
-    if (!content) return;
+    if (!content) return nil;
     id resourceUrl = [content valueForKey:@"resourceUrl"];
-    if (!resourceUrl) return;
-    NSString *urlStr = [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
-    if (!urlStr.length) return;
-
-    NSString *msgID = [message valueForKey:@"messageID"];
-    if (!msgID) return;
-
-    [[AWECADownloadManager shared] cacheURL:urlStr forVID:msgID];
-}
-
-// 根据 messageID 在 TableView 中查找并缓存消息
-static void cacheMessageByID(UITableView *tableView, NSString *msgID) {
-    if (!tableView || !msgID) return;
-    for (UITableViewCell *cell in tableView.visibleCells) {
-        id message = [cell valueForKey:@"message"];
-        if (message) {
-            NSString *currentMsgID = [message valueForKey:@"messageID"];
-            if ([currentMsgID isEqualToString:msgID]) {
-                cacheAudioURLForMessage(message);
-                return;
-            }
-        }
-    }
+    if (!resourceUrl) return nil;
+    return [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
 }
 
 // ========== 评论区功能（保持不变） ==========
@@ -417,44 +406,13 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 播放时自动缓存 CDN 链接（直接从 TableView 查找） ==========
-%hook AWEIMAudioPlaySessionTracker
-
-- (void)beginPlaySessionWithSessionID:(id)sessionID conversationID:(id)convID messageID:(id)msgID audioDurationMs:(long long)durationMs triggerType:(id)triggerType {
-    %orig;
-
-    UIWindow *window = nil;
-    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive) {
-            window = scene.windows.firstObject;
-            break;
-        }
-    }
-    if (!window) return;
-
-    // 递归查找 TableView
-    void (^findAndCache)(UIView *, NSString *) = ^(UIView *view, NSString *targetID) {
-        if ([view isKindOfClass:[UITableView class]]) {
-            cacheMessageByID((UITableView *)view, targetID);
-            return;
-        }
-        for (UIView *sub in view.subviews) {
-            findAndCache(sub, targetID);
-        }
-    };
-    findAndCache(window, msgID);
-}
-
-%end
-
-// ========== 长按菜单显示前存储消息并缓存链接 ==========
+// ========== 长按菜单显示时存储消息到单例 ==========
 %hook AWEIMMessageListViewController
 
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
-    g_lastLongPressedMessage = message;
     if (message) {
-        cacheAudioURLForMessage(message);
+        [AWECAIMDownloadHelper shared].currentMessage = message;
     }
 }
 
@@ -463,9 +421,10 @@ static void setupStackViewLayoutHook(void) {
 // ========== 私信原生菜单注入（下载 & 设置） ==========
 
 static void doDownloadVoice(id menuView) {
-    id message = g_lastLongPressedMessage;
+    // 从单例获取消息对象
+    id message = [AWECAIMDownloadHelper shared].currentMessage;
     if (!message) {
-        // 备用方式：从菜单视图或父 Cell 获取
+        // 备用：从菜单视图或父 Cell 获取
         message = [menuView valueForKey:@"message"];
         if (!message) {
             UIView *cell = [(UIView *)menuView superview];
@@ -476,29 +435,13 @@ static void doDownloadVoice(id menuView) {
         }
     }
 
-    NSString *msgID = nil;
-    NSString *audioURL = nil;
-
-    if (message) {
-        msgID = [message valueForKey:@"messageID"];
-        id content = [message valueForKey:@"content"];
-        if (content) {
-            id resourceUrl = [content valueForKey:@"resourceUrl"];
-            if (resourceUrl) {
-                audioURL = [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
-            }
-        }
-    }
-
-    if (!audioURL && msgID) {
-        audioURL = [[AWECADownloadManager shared] cachedURLForVID:msgID];
-    }
-
+    NSString *audioURL = extractAudioURLFromMessage(message);
     if (!audioURL.length) {
-        [AWECAUtils showToast:@"请先播放该语音以获取下载链接"];
+        [AWECAUtils showToast:@"无法获取音频链接"];
         return;
     }
 
+    NSString *msgID = [message valueForKey:@"messageID"];
     showSaveDialogForURL(audioURL, msgID);
 }
 
@@ -596,7 +539,8 @@ static void doVoiceSettings(id menuView) {
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
-    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+    id message = [AWECAIMDownloadHelper shared].currentMessage;
+    if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         return originalCount + 2;
     }
     return originalCount;
