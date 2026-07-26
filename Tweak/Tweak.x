@@ -30,7 +30,6 @@
 
 @interface AWEIMMessageListViewController : UIViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
-@property (nonatomic, strong) UITableView *tableView;
 @end
 
 // 私信下载助手单例
@@ -421,10 +420,8 @@ static void setupStackViewLayoutHook(void) {
 // ========== 私信原生菜单注入（下载 & 设置） ==========
 
 static void doDownloadVoice(id menuView) {
-    // 从单例获取消息对象
     id message = [AWECAIMDownloadHelper shared].currentMessage;
     if (!message) {
-        // 备用：从菜单视图或父 Cell 获取
         message = [menuView valueForKey:@"message"];
         if (!message) {
             UIView *cell = [(UIView *)menuView superview];
