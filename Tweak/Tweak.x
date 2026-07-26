@@ -384,18 +384,20 @@ static void setupStackViewLayoutHook(void) {
     return %orig;
 }
 
-// 修正气泡生成时的时长
+// 修正气泡时长：尝试设置秒或毫秒类型
 - (id)p_generateAudioBubbleWithPowers:(id)powers totalTime:(double)totalTime {
     id bubble = %orig;
     if ([AWECAAudioReplacer shared].enabled && self.recordFilePath.length > 0) {
-        double realDuration = [AWECAUtils audioDurationAtPath:self.recordFilePath];
-        if (realDuration > 0) {
+        double realSec = [AWECAUtils audioDurationAtPath:self.recordFilePath];
+        if (realSec > 0) {
             @try {
-                [bubble setValue:@(realDuration) forKey:@"duration"];
+                [bubble setValue:@(realSec) forKey:@"duration"];
             } @catch (NSException *e) {
                 @try {
-                    [bubble setValue:@((long long)(realDuration * 1000)) forKey:@"duration"];
-                } @catch (NSException *e2) {}
+                    [bubble setValue:@((long long)(realSec * 1000)) forKey:@"duration"];
+                } @catch (NSException *e2) {
+                    NSLog(@"AWECommentAudioTweak: 无法设置气泡 duration，类: %@", NSStringFromClass([bubble class]));
+                }
             }
         }
     }
@@ -405,14 +407,16 @@ static void setupStackViewLayoutHook(void) {
 - (id)p_generateNewAudioBubbleWithPowers:(id)powers totalTime:(double)totalTime {
     id bubble = %orig;
     if ([AWECAAudioReplacer shared].enabled && self.recordFilePath.length > 0) {
-        double realDuration = [AWECAUtils audioDurationAtPath:self.recordFilePath];
-        if (realDuration > 0) {
+        double realSec = [AWECAUtils audioDurationAtPath:self.recordFilePath];
+        if (realSec > 0) {
             @try {
-                [bubble setValue:@(realDuration) forKey:@"duration"];
+                [bubble setValue:@(realSec) forKey:@"duration"];
             } @catch (NSException *e) {
                 @try {
-                    [bubble setValue:@((long long)(realDuration * 1000)) forKey:@"duration"];
-                } @catch (NSException *e2) {}
+                    [bubble setValue:@((long long)(realSec * 1000)) forKey:@"duration"];
+                } @catch (NSException *e2) {
+                    NSLog(@"AWECommentAudioTweak: 无法设置气泡 duration，类: %@", NSStringFromClass([bubble class]));
+                }
             }
         }
     }
