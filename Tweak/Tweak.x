@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（修复下载失效，双保险抓取消息）
+// AWECommentAudioTweak - 全功能最终版（私信+群聊下载 & 设置）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -32,6 +32,10 @@
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
 @end
 
+// 群聊菜单容器
+@interface AFDHoverableContainerView : UIView
+@end
+
 // 前置声明
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
@@ -41,12 +45,12 @@ static double realAudioDuration(NSString *filePath);
 static void showSaveDialogForURL(NSString *urlString, NSString *msgID);
 static void downloadFromURL(NSString *urlStr, NSString *savePath);
 static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc);
-static void doDownloadVoice(id menuView);
+static void doDownloadVoiceFromMenu(id menuView);
 static void doVoiceSettings(id menuView);
 static id getMessageFromMenuView(UIView *menuView);
 static NSString *extractAudioURLFromMessage(id message);
 
-// 全局静态变量，存储最近一次长按的消息对象
+// 全局静态变量，存储最近一次长按的消息对象（私信使用）
 static id g_lastLongPressedMessage = nil;
 
 // 获取真实时长
@@ -80,20 +84,16 @@ static NSString *extractAudioURLFromMessage(id message) {
     if (!content) return nil;
     id resourceUrl = [content valueForKey:@"resourceUrl"];
     if (!resourceUrl) return nil;
-
-    // 尝试拿 originURLList 数组的第一个 URL
     NSArray *originList = [resourceUrl valueForKey:@"originURLList"];
     if (originList && originList.count > 0) {
         return originList.firstObject;
     }
-
-    // 备用：url 或 urlString
     return [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
 }
 
-// 兜底查找：通过 TableView 定位消息
+// 通过菜单视图查找消息对象（兼容私信和群聊）
 static id getMessageFromMenuView(UIView *menuView) {
-    // 向上找 TableView
+    // 向上查找 TableView
     UIView *current = menuView;
     UITableView *tableView = nil;
     while (current) {
@@ -119,7 +119,6 @@ static id getMessageFromMenuView(UIView *menuView) {
             }
         }
     }
-
     // 回退：直接向上找 Cell
     current = menuView;
     while (current) {
@@ -448,49 +447,130 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 关键：长按菜单显示时保存消息 ==========
+// ========== 私信长按菜单回调 ==========
 %hook AWEIMMessageListViewController
-
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
     if (message) {
         g_lastLongPressedMessage = message;
     }
 }
-
 %end
 
-// ========== 私信原生菜单注入（下载 & 设置） ==========
+// ========== 私信菜单注入（通过数据源方式） ==========
+%hook AWEIMEmojiReplyMenuView
+- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
+    NSInteger originalCount = %orig;
+    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+        return originalCount + 2;
+    }
+    return originalCount;
+}
+- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
+    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
+    if (indexPath.item >= originalCount) {
+        UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
+        cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+        for (UIView *sub in cell.subviews) {
+            for (UIView *inner in sub.subviews) {
+                if ([inner isKindOfClass:[UIImageView class]]) {
+                    UIImageView *imageView = (UIImageView *)inner;
+                    UIImage *icon = (indexPath.item == originalCount) ? [UIImage systemImageNamed:@"arrow.down.circle"]
+                                                                      : [UIImage systemImageNamed:@"gearshape"];
+                    if (icon) imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+                }
+                if ([inner isKindOfClass:[UILabel class]]) {
+                    UILabel *label = (UILabel *)inner;
+                    label.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+                    label.text = (indexPath.item == originalCount) ? @"下载" : @"设置";
+                    cell.accessibilityLabel = label.text;
+                }
+            }
+        }
+        return cell;
+    }
+    return %orig;
+}
+- (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
+    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
+    if (indexPath.item >= originalCount) {
+        if (indexPath.item == originalCount) {
+            doDownloadVoiceFromMenu(self);
+        } else {
+            doVoiceSettings(self);
+        }
+        return;
+    }
+    %orig;
+}
+%end
 
-static void doDownloadVoice(id menuView) {
-    // 优先使用长按回调保存的消息
+// ========== 群聊菜单注入（直接在容器上添加按钮） ==========
+%hook AFDHoverableContainerView
+- (void)layoutSubviews {
+    %orig;
+    // 避免重复添加
+    if ([self viewWithTag:30001]) return;
+
+    // 获取当前关联的消息对象
+    id message = getMessageFromMenuView(self);
+
+    // 只为语音消息添加按钮
+    if (!message || ![message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return;
+
+    CGFloat menuH = self.bounds.size.height;
+    CGFloat btnW = self.bounds.size.width - 32;
+
+    UIButton *downloadBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    downloadBtn.tag = 30001;
+    downloadBtn.frame = CGRectMake(16, menuH - 100, btnW, 44);
+    [downloadBtn setTitle:@"📥 下载语音" forState:UIControlStateNormal];
+    downloadBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
+    downloadBtn.layer.cornerRadius = 10;
+    downloadBtn.tintColor = [UIColor whiteColor];
+    [downloadBtn addTarget:self action:@selector(aweca_downloadVoiceFromMenu) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:downloadBtn];
+
+    UIButton *settingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    settingsBtn.tag = 30002;
+    settingsBtn.frame = CGRectMake(16, menuH - 50, btnW, 44);
+    [settingsBtn setTitle:@"⚙️ 语音设置" forState:UIControlStateNormal];
+    settingsBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
+    settingsBtn.layer.cornerRadius = 10;
+    settingsBtn.tintColor = [UIColor whiteColor];
+    [settingsBtn addTarget:self action:@selector(aweca_voiceSettingsFromMenu) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:settingsBtn];
+}
+%end
+
+// ========== 下载和设置的具体实现 ==========
+static void doDownloadVoiceFromMenu(id menuView) {
     id message = g_lastLongPressedMessage;
     if (!message) {
-        // 回退到 TableView 查找
         message = getMessageFromMenuView((UIView *)menuView);
     }
-
     if (!message) {
         [AWECAUtils showToast:@"无法获取消息对象"];
         return;
     }
-
     NSString *audioURL = extractAudioURLFromMessage(message);
     if (!audioURL.length) {
         [AWECAUtils showToast:@"无法获取音频链接"];
         return;
     }
-
     NSString *msgID = [message valueForKey:@"messageID"];
     showSaveDialogForURL(audioURL, msgID);
+}
+
+static void doVoiceSettings(id menuView) {
+    [[AWECAAudioPickerController shared] showPickerFromViewController:[AWECAUtils topViewController]];
 }
 
 static void showSaveDialogForURL(NSString *urlString, NSString *msgID) {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *topVC = [AWECAUtils topViewController];
         if (!topVC) return;
-
-        NSString *defaultName = [NSString stringWithFormat:@"私信语音_%@", msgID ?: @((int)[[NSDate date] timeIntervalSince1970])];
+        NSString *defaultName = [NSString stringWithFormat:@"语音_%@", msgID ?: @((int)[[NSDate date] timeIntervalSince1970])];
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存语音" message:nil preferredStyle:UIAlertControllerStyleAlert];
         [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
             tf.text = defaultName; tf.placeholder = @"文件名(不含扩展名)"; tf.clearButtonMode = UITextFieldViewModeWhileEditing;
@@ -539,7 +619,6 @@ static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewControl
         NSString *fullPath = [baseDir stringByAppendingPathComponent:item];
         if ([fm fileExistsAtPath:fullPath isDirectory:&isDir] && isDir) [folders addObject:item];
     }
-
     UIAlertController *picker = [UIAlertController alertControllerWithTitle:@"选择保存位置" message:baseDir preferredStyle:UIAlertControllerStyleActionSheet];
     [picker addAction:[UIAlertAction actionWithTitle:@"默认目录" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         downloadFromURL(cdnURL, [baseDir stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
@@ -571,66 +650,21 @@ static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewControl
     [vc presentViewController:picker animated:YES completion:nil];
 }
 
-static void doVoiceSettings(id menuView) {
-    [[AWECAAudioPickerController shared] showPickerFromViewController:[AWECAUtils topViewController]];
-}
-
-%hook AWEIMEmojiReplyMenuView
-
-- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
-    NSInteger originalCount = %orig;
-    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
-        return originalCount + 2;
-    }
-    return originalCount;
-}
-
-- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
-    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
-    if (indexPath.item >= originalCount) {
-        UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
-        cell.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-
-        for (UIView *sub in cell.subviews) {
-            for (UIView *inner in sub.subviews) {
-                if ([inner isKindOfClass:[UIImageView class]]) {
-                    UIImageView *imageView = (UIImageView *)inner;
-                    UIImage *icon = (indexPath.item == originalCount) ? [UIImage systemImageNamed:@"arrow.down.circle"]
-                                                                      : [UIImage systemImageNamed:@"gearshape"];
-                    if (icon) imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-                }
-                if ([inner isKindOfClass:[UILabel class]]) {
-                    UILabel *label = (UILabel *)inner;
-                    label.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-                    label.text = (indexPath.item == originalCount) ? @"下载" : @"设置";
-                    cell.accessibilityLabel = label.text;
-                }
-            }
-        }
-        return cell;
-    }
-    return %orig;
-}
-
-- (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
-    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
-    if (indexPath.item >= originalCount) {
-        if (indexPath.item == originalCount) {
-            doDownloadVoice(self);
-        } else {
-            doVoiceSettings(self);
-        }
-        return;
-    }
-    %orig;
-}
-
-%end
-
 %ctor {
     [AWECAUtils ensureDirectoriesExist];
     [AWECAAudioReplacer shared];
     setupAudioInputElementHook();
     setupAudioIconElementHook();
     setupStackViewLayoutHook();
+
+    // 为群聊菜单容器注入方法
+    Class hoverClass = NSClassFromString(@"AFDHoverableContainerView");
+    if (hoverClass) {
+        if (!class_respondsToSelector(hoverClass, @selector(aweca_downloadVoiceFromMenu))) {
+            class_addMethod(hoverClass, @selector(aweca_downloadVoiceFromMenu), (IMP)doDownloadVoiceFromMenuIMP, "v@:");
+        }
+        if (!class_respondsToSelector(hoverClass, @selector(aweca_voiceSettingsFromMenu))) {
+            class_addMethod(hoverClass, @selector(aweca_voiceSettingsFromMenu), (IMP)doVoiceSettingsIMP, "v@:");
+        }
+    }
 }
