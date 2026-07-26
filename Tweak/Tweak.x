@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 评论区 + 私信语音替换，更多面板固定在 x=240 (终极时长修正)
+// AWECommentAudioTweak - 评论区 + 私信语音替换，更多面板固定在 x=240 (最终版)
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -24,7 +24,12 @@
 - (NSString *)p_getTimeTextWithValue:(double)value;
 @end
 
-// 关联对象 key，用于在气泡视图上存储真实时长
+@interface AWEIMAudioRecorderView : UIView
+@property (nonatomic, strong) AWEIMRecorderVolumeIncreaseView *volumeIncreaseView;
+@property (nonatomic, assign) BOOL isFinish;
+@end
+
+// 关联对象 Key
 static char kRealDurationKey;
 
 // 前置声明
@@ -380,7 +385,7 @@ static void setupStackViewLayoutHook(void) {
     }
 }
 
-// ========== 私信语音替换（终极方案：关联对象 + 布局强制修正） ==========
+// ========== 私信语音替换（关联对象 + 布局强制修正） ==========
 
 %hook AWEIMAudioRecordController
 
@@ -391,7 +396,7 @@ static void setupStackViewLayoutHook(void) {
             [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
             double realSec = realAudioDuration(path);
             if (realSec > 0) {
-                // 修正 recorder 的 duration（双保险）
+                // 修正 recorder 的 duration
                 @try {
                     [recorder setValue:@(realSec) forKey:@"duration"];
                 } @catch (NSException *e) {
@@ -399,14 +404,14 @@ static void setupStackViewLayoutHook(void) {
                         [recorder setValue:@((long long)(realSec * 1000)) forKey:@"duration"];
                     } @catch (NSException *e2) {}
                 }
-                // 保存到 self 上，供后续气泡使用
+                // 保存真实时长到 self，供气泡生成时使用
                 objc_setAssociatedObject(self, &kRealDurationKey, @(realSec), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             }
             [AWECAUtils showToast:@"私信语音已替换"];
         }
     }
     BOOL result = %orig;
-    // 清除关联对象，防止污染下次录音
+    // 清除关联对象，避免污染下次录音
     objc_setAssociatedObject(self, &kRealDurationKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return result;
 }
@@ -419,7 +424,7 @@ static void setupStackViewLayoutHook(void) {
     }
     id bubble = %orig;
     if (realDuration && bubble) {
-        // 把真实时长绑定到气泡视图上，供 layoutSubviews 使用
+        // 将真实时长绑定到气泡视图
         objc_setAssociatedObject(bubble, &kRealDurationKey, realDuration, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     return bubble;
@@ -439,12 +444,11 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// 核心：Hook 气泡视图的 layoutSubviews，强制更新时长标签
+// 核心：Hook 气泡视图的 layoutSubviews，每次布局都修正时长标签
 %hook AWEIMAudioRecorderView
 
 - (void)layoutSubviews {
     %orig;
-    // 获取绑定的真实时长
     NSNumber *realDuration = objc_getAssociatedObject(self, &kRealDurationKey);
     if (realDuration) {
         double realSec = [realDuration doubleValue];
