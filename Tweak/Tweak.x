@@ -24,8 +24,9 @@
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
 
-// 关键：将 AWEIMEmojiReplyMenuView 声明为 UIView 子类，以便编译器识别
-@interface AWEIMEmojiReplyMenuView : UIView
+// 关键：完整的 AWEIMEmojiReplyMenuView 声明，包含协议和集合视图属性
+@interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
+@property (nonatomic, strong) UICollectionView *collectionView;
 @end
 
 // 前置声明
@@ -377,7 +378,6 @@ static void setupStackViewLayoutHook(void) {
 
 // ========== 私信原生菜单注入（下载 & 设置） ==========
 
-// 下载功能实现
 static void doDownloadVoice(id menuView) {
     id message = [menuView valueForKey:@"message"];
     if (!message) return;
@@ -416,7 +416,6 @@ static void doDownloadVoice(id menuView) {
     [[AWECADownloadManager shared] showSaveDialogAndDownload:commentModel];
 }
 
-// 语音设置功能实现
 static void doVoiceSettings(id menuView) {
     UIViewController *vc = [AWECAUtils topViewController];
     [[AWECAAudioPickerController shared] showPickerFromViewController:vc];
@@ -435,7 +434,6 @@ static void doVoiceSettings(id menuView) {
 
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
-    
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
         for (UIView *sub in cell.subviews) {
