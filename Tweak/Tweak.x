@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（通过长按回调精准抓取消息，下载与评论区完全一致）
+// AWECommentAudioTweak - 全功能最终版（修复编译，精准抓取消息，下载与评论区一致）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -26,7 +26,12 @@
 
 @interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
 @property (nonatomic, strong) UICollectionView *collectionView;
-@property (nonatomic, weak) id message; // 菜单关联的消息，可能不存在，我们通过 Hook 补上
+@property (nonatomic, weak) id message;
+@end
+
+// 关键：将 AWEIMMessageListViewController 声明为 UIViewController 子类
+@interface AWEIMMessageListViewController : UIViewController
+- (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
 @end
 
 @interface AWEIMAudioPlaySessionTracker : NSObject
@@ -85,6 +90,24 @@ static void cacheAudioURLForMessage(id message) {
     if (!msgID) return;
 
     [[AWECADownloadManager shared] cacheURL:urlStr forVID:msgID];
+}
+
+// 递归搜索窗口中的 Cell，根据 messageID 找到对应消息并缓存
+static void searchAndCacheMessage(UIView *view, NSString *msgID) {
+    if (!view || !msgID) return;
+    if ([view isKindOfClass:[UITableViewCell class]] || [view isKindOfClass:[UICollectionViewCell class]]) {
+        id message = [view valueForKey:@"message"];
+        if (message) {
+            NSString *currentMsgID = [message valueForKey:@"messageID"];
+            if ([currentMsgID isEqualToString:msgID]) {
+                cacheAudioURLForMessage(message);
+                return;
+            }
+        }
+    }
+    for (UIView *subview in view.subviews) {
+        searchAndCacheMessage(subview, msgID);
+    }
 }
 
 // ========== 评论区功能（保持不变） ==========
@@ -412,22 +435,7 @@ static void setupStackViewLayoutHook(void) {
     }
     if (!window) return;
 
-    void (^searchInView)(UIView *) = ^(UIView *view) {
-        if ([view isKindOfClass:[UITableViewCell class]] || [view isKindOfClass:[UICollectionViewCell class]]) {
-            id message = [view valueForKey:@"message"];
-            if (message) {
-                NSString *currentMsgID = [message valueForKey:@"messageID"];
-                if ([currentMsgID isEqualToString:msgID]) {
-                    cacheAudioURLForMessage(message);
-                    return;
-                }
-            }
-        }
-        for (UIView *subview in view.subviews) {
-            searchInView(subview);
-        }
-    };
-    searchInView(window);
+    searchAndCacheMessage(window, msgID);
 }
 
 %end
@@ -437,23 +445,18 @@ static void setupStackViewLayoutHook(void) {
 
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
-    // 将消息对象存储到菜单视图的关联属性中，供下载时使用
     if (message) {
         // 缓存链接
         cacheAudioURLForMessage(message);
 
-        // 同时将消息对象通过 KVC 传递给菜单视图（如果菜单视图存在）
-        UIView *menuView = nil;
+        // 将消息对象通过 KVC 传递给菜单视图
         for (UIView *subview in self.view.subviews) {
             if ([subview isKindOfClass:NSClassFromString(@"AWEIMEmojiReplyMenuView")]) {
-                menuView = subview;
+                @try {
+                    [subview setValue:message forKey:@"message"];
+                } @catch (NSException *e) {}
                 break;
             }
-        }
-        if (menuView) {
-            @try {
-                [menuView setValue:message forKey:@"message"];
-            } @catch (NSException *e) {}
         }
     }
 }
@@ -465,7 +468,6 @@ static void setupStackViewLayoutHook(void) {
 static void doDownloadVoice(id menuView) {
     id message = [menuView valueForKey:@"message"];
     if (!message) {
-        // 如果菜单上没有 message，尝试从视图链中查找
         UIView *cell = [(UIView *)menuView superview];
         while (cell && ![cell isKindOfClass:[UITableViewCell class]] && ![cell isKindOfClass:[UICollectionViewCell class]]) {
             cell = cell.superview;
@@ -487,7 +489,6 @@ static void doDownloadVoice(id menuView) {
         }
     }
 
-    // 从缓存中获取
     if (!audioURL && msgID) {
         audioURL = [[AWECADownloadManager shared] cachedURLForVID:msgID];
     }
@@ -596,7 +597,6 @@ static void doVoiceSettings(id menuView) {
     NSInteger originalCount = %orig;
     id message = [self valueForKey:@"message"];
     if (!message) {
-        // 如果菜单上没有 message，尝试从父 Cell 获取
         UIView *cell = self.superview;
         while (cell && ![cell isKindOfClass:[UITableViewCell class]] && ![cell isKindOfClass:[UICollectionViewCell class]]) {
             cell = cell.superview;
