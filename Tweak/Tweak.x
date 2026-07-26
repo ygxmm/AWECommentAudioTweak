@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（基于 originURLList 直接下载，无需播放）
+// AWECommentAudioTweak - 全功能最终版（修复普通长按无下载问题）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -32,23 +32,6 @@
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
 @end
 
-// 私信下载助手单例
-@interface AWECAIMDownloadHelper : NSObject
-+ (instancetype)shared;
-@property (nonatomic, strong) id currentMessage;
-@end
-
-@implementation AWECAIMDownloadHelper
-+ (instancetype)shared {
-    static AWECAIMDownloadHelper *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[AWECAIMDownloadHelper alloc] init];
-    });
-    return instance;
-}
-@end
-
 // 前置声明
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
@@ -60,6 +43,8 @@ static void downloadFromURL(NSString *urlStr, NSString *savePath);
 static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc);
 static void doDownloadVoice(id menuView);
 static void doVoiceSettings(id menuView);
+static id getMessageFromMenuView(UIView *menuView);
+static NSString *extractAudioURLFromMessage(id message);
 
 // 获取真实时长
 static double realAudioDuration(NSString *filePath) {
@@ -82,6 +67,32 @@ static UIView *findMorePanelElementView(UIView *stackView) {
             }
         }
     }
+    return nil;
+}
+
+// 从菜单视图链向上查找 Cell，获取消息对象
+static id getMessageFromMenuView(UIView *menuView) {
+    UIView *cell = menuView;
+    while (cell) {
+        if ([cell isKindOfClass:NSClassFromString(@"AWEIMReusableCommonCell")] ||
+            [cell isKindOfClass:[UITableViewCell class]]) {
+            break;
+        }
+        cell = cell.superview;
+    }
+    if (!cell) return nil;
+
+    // 尝试通过 message 属性获取
+    id message = [cell valueForKey:@"message"];
+    if (message) return message;
+
+    // 尝试通过 currentContext 获取
+    id context = [cell valueForKey:@"currentContext"];
+    if (context) {
+        message = [context valueForKey:@"message"];
+        if (message) return message;
+    }
+
     return nil;
 }
 
@@ -413,31 +424,13 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 长按菜单显示时存储消息到单例 ==========
-%hook AWEIMMessageListViewController
-
-- (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
-    %orig;
-    if (message) {
-        [AWECAIMDownloadHelper shared].currentMessage = message;
-    }
-}
-
-%end
-
-// ========== 私信原生菜单注入（下载 & 设置） ==========
+// ========== 私信原生菜单注入（修复普通长按问题） ==========
 
 static void doDownloadVoice(id menuView) {
-    id message = [AWECAIMDownloadHelper shared].currentMessage;
+    id message = getMessageFromMenuView((UIView *)menuView);
     if (!message) {
-        message = [menuView valueForKey:@"message"];
-        if (!message) {
-            UIView *cell = [(UIView *)menuView superview];
-            while (cell && ![cell isKindOfClass:[UITableViewCell class]] && ![cell isKindOfClass:[UICollectionViewCell class]]) {
-                cell = cell.superview;
-            }
-            if (cell) message = [cell valueForKey:@"message"];
-        }
+        [AWECAUtils showToast:@"无法获取消息"];
+        return;
     }
 
     NSString *audioURL = extractAudioURLFromMessage(message);
@@ -544,7 +537,7 @@ static void doVoiceSettings(id menuView) {
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
-    id message = [AWECAIMDownloadHelper shared].currentMessage;
+    id message = getMessageFromMenuView(self);
     if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         return originalCount + 2;
     }
