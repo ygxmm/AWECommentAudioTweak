@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（群聊菜单高度修复 + 下载正常）
+// AWECommentAudioTweak - 全功能最终版（群聊菜单高度修复，完整显示两行）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -599,7 +599,7 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 群聊菜单注入（修复高度 + 强制查找消息） ==========
+// ========== 群聊菜单注入（修复高度为 contentSize，完整显示两行） ==========
 %hook AFDHoverableContainerView
 - (void)didMoveToSuperview {
     %orig;
@@ -613,13 +613,15 @@ static void setupStackViewLayoutHook(void) {
 }
 
 - (void)layoutSubviews {
-    // 先调整内部 UICollectionView 高度，使其容纳两行菜单
+    // 先调整内部 UICollectionView 的高度，使其等于其内容高度（contentSize.height）
     for (UIView *sub in self.subviews) {
         if ([sub isKindOfClass:[UICollectionView class]]) {
             UICollectionView *cv = (UICollectionView *)sub;
             CGRect frame = cv.frame;
-            if (frame.size.height < 146) { // 需要容纳两行
-                frame.size.height = 146;
+            CGFloat contentH = cv.contentSize.height;
+            // 如果内容高度大于当前高度，则扩展到内容高度，否则保持原高度（至少为 73）
+            if (contentH > frame.size.height) {
+                frame.size.height = contentH;
                 cv.frame = frame;
             }
             break;
