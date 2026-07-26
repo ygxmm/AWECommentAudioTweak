@@ -10,6 +10,16 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
+// ==== 私信录音控制器声明（避免编译报错） ====
+@interface AWEIMAudioRecordController : NSObject
+@property (nonatomic, copy) NSString *recordFilePath;
+- (BOOL)sendRecordMessageIfNeededWithFilePath:(id)filePath audioRecorder:(id)recorder;
+@end
+
+@interface AWEIMFormatAudioRecordController : NSObject
+// 不需要声明具体属性，我们通过 KVC 访问 recorder.url
+@end
+
 // 前置声明
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
