@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（私信+群聊下载 & 设置）
+// AWECommentAudioTweak - 全功能最终版（私信+群聊下载 & 设置，编译修复）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -32,7 +32,6 @@
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
 @end
 
-// 群聊菜单容器
 @interface AFDHoverableContainerView : UIView
 @end
 
@@ -49,6 +48,14 @@ static void doDownloadVoiceFromMenu(id menuView);
 static void doVoiceSettings(id menuView);
 static id getMessageFromMenuView(UIView *menuView);
 static NSString *extractAudioURLFromMessage(id message);
+
+// 群聊按钮回调（符合 UIControl action 签名）
+static void aweca_groupDownloadAction(id self, SEL _cmd) {
+    doDownloadVoiceFromMenu(self);
+}
+static void aweca_groupSettingsAction(id self, SEL _cmd) {
+    doVoiceSettings(self);
+}
 
 // 全局静态变量，存储最近一次长按的消息对象（私信使用）
 static id g_lastLongPressedMessage = nil;
@@ -77,7 +84,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// 从消息对象中提取音频 URL（优先取 originURLList 第一个）
+// 从消息对象中提取音频 URL
 static NSString *extractAudioURLFromMessage(id message) {
     if (!message) return nil;
     id content = [message valueForKey:@"content"];
@@ -528,7 +535,7 @@ static void setupStackViewLayoutHook(void) {
     downloadBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
     downloadBtn.layer.cornerRadius = 10;
     downloadBtn.tintColor = [UIColor whiteColor];
-    [downloadBtn addTarget:self action:@selector(aweca_downloadVoiceFromMenu) forControlEvents:UIControlEventTouchUpInside];
+    [downloadBtn addTarget:self action:@selector(aweca_groupDownloadAction) forControlEvents:UIControlEventTouchUpInside];
     [self addSubview:downloadBtn];
 
     UIButton *settingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -538,7 +545,7 @@ static void setupStackViewLayoutHook(void) {
     settingsBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
     settingsBtn.layer.cornerRadius = 10;
     settingsBtn.tintColor = [UIColor whiteColor];
-    [settingsBtn addTarget:self action:@selector(aweca_voiceSettingsFromMenu) forControlEvents:UIControlEventTouchUpInside];
+    [settingsBtn addTarget:self action:@selector(aweca_groupSettingsAction) forControlEvents:UIControlEventTouchUpInside];
     [self addSubview:settingsBtn];
 }
 %end
@@ -660,11 +667,11 @@ static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewControl
     // 为群聊菜单容器注入方法
     Class hoverClass = NSClassFromString(@"AFDHoverableContainerView");
     if (hoverClass) {
-        if (!class_respondsToSelector(hoverClass, @selector(aweca_downloadVoiceFromMenu))) {
-            class_addMethod(hoverClass, @selector(aweca_downloadVoiceFromMenu), (IMP)doDownloadVoiceFromMenuIMP, "v@:");
+        if (!class_respondsToSelector(hoverClass, @selector(aweca_groupDownloadAction))) {
+            class_addMethod(hoverClass, @selector(aweca_groupDownloadAction), (IMP)aweca_groupDownloadAction, "v@:");
         }
-        if (!class_respondsToSelector(hoverClass, @selector(aweca_voiceSettingsFromMenu))) {
-            class_addMethod(hoverClass, @selector(aweca_voiceSettingsFromMenu), (IMP)doVoiceSettingsIMP, "v@:");
+        if (!class_respondsToSelector(hoverClass, @selector(aweca_groupSettingsAction))) {
+            class_addMethod(hoverClass, @selector(aweca_groupSettingsAction), (IMP)aweca_groupSettingsAction, "v@:");
         }
     }
 }
