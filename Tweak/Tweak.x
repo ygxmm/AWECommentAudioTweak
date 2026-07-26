@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 全功能最终版（编译修复 + 群聊下载正常）
+// AWECommentAudioTweak - 全功能最终版（群聊下载修复）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -599,16 +599,15 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 群聊菜单注入（强化消息获取，修复下载） ==========
+// ========== 群聊菜单注入（强制查找消息对象） ==========
 %hook AFDHoverableContainerView
 - (void)didMoveToSuperview {
     %orig;
     if (self.superview) {
-        // 每次菜单显示时重新获取消息对象
+        // 立即查找消息对象
         id msg = getMessageFromMenuView(self);
         if (msg) {
             g_lastLongPressedMessage = msg;
-            // 同时缓存链接
             cacheAudioURLForMessage(msg);
         }
     }
@@ -616,69 +615,66 @@ static void setupStackViewLayoutHook(void) {
 
 - (void)layoutSubviews {
     %orig;
-    if ([self viewWithTag:30001]) return;
+    // 每次布局都尝试获取消息，确保下载可用
+    id message = getMessageFromMenuView(self);
+    if (message && [message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+        g_lastLongPressedMessage = message;
+        cacheAudioURLForMessage(message);
+        
+        if (![self viewWithTag:30001]) {
+            UIView *contentArea = nil;
+            for (UIView *sub in self.subviews) {
+                if ([sub isKindOfClass:[UICollectionView class]]) {
+                    contentArea = sub;
+                    break;
+                }
+            }
+            if (!contentArea) contentArea = self;
 
-    id message = g_lastLongPressedMessage;
-    if (!message) {
-        message = getMessageFromMenuView(self);
-        if (message) {
-            g_lastLongPressedMessage = message;
-            cacheAudioURLForMessage(message);
+            CGFloat y = contentArea.frame.origin.y + contentArea.frame.size.height + 4;
+            CGFloat centerX = self.bounds.size.width / 2;
+
+            UIView *downloadItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
+            downloadItem.tag = 30001;
+            downloadItem.center = CGPointMake(centerX - 40, y + 25);
+
+            UIImageView *downloadIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
+            downloadIcon.image = [[UIImage systemImageNamed:@"arrow.down.circle"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+            downloadIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+            [downloadItem addSubview:downloadIcon];
+
+            UILabel *downloadLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
+            downloadLabel.text = @"下载";
+            downloadLabel.font = [UIFont systemFontOfSize:12];
+            downloadLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+            downloadLabel.textAlignment = NSTextAlignmentCenter;
+            [downloadItem addSubview:downloadLabel];
+
+            UITapGestureRecognizer *tap1 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupDownloadAction)];
+            [downloadItem addGestureRecognizer:tap1];
+            [self addSubview:downloadItem];
+
+            UIView *settingsItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
+            settingsItem.tag = 30002;
+            settingsItem.center = CGPointMake(centerX + 40, y + 25);
+
+            UIImageView *settingsIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
+            settingsIcon.image = [[UIImage systemImageNamed:@"gearshape"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+            settingsIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+            [settingsItem addSubview:settingsIcon];
+
+            UILabel *settingsLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
+            settingsLabel.text = @"设置";
+            settingsLabel.font = [UIFont systemFontOfSize:12];
+            settingsLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+            settingsLabel.textAlignment = NSTextAlignmentCenter;
+            [settingsItem addSubview:settingsLabel];
+
+            UITapGestureRecognizer *tap2 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupSettingsAction)];
+            [settingsItem addGestureRecognizer:tap2];
+            [self addSubview:settingsItem];
         }
     }
-    if (!message || ![message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return;
-
-    UIView *contentArea = nil;
-    for (UIView *sub in self.subviews) {
-        if ([sub isKindOfClass:[UICollectionView class]]) {
-            contentArea = sub;
-            break;
-        }
-    }
-    if (!contentArea) contentArea = self;
-
-    CGFloat y = contentArea.frame.origin.y + contentArea.frame.size.height + 4;
-    CGFloat centerX = self.bounds.size.width / 2;
-
-    UIView *downloadItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
-    downloadItem.tag = 30001;
-    downloadItem.center = CGPointMake(centerX - 40, y + 25);
-
-    UIImageView *downloadIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
-    downloadIcon.image = [[UIImage systemImageNamed:@"arrow.down.circle"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-    downloadIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-    [downloadItem addSubview:downloadIcon];
-
-    UILabel *downloadLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
-    downloadLabel.text = @"下载";
-    downloadLabel.font = [UIFont systemFontOfSize:12];
-    downloadLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-    downloadLabel.textAlignment = NSTextAlignmentCenter;
-    [downloadItem addSubview:downloadLabel];
-
-    UITapGestureRecognizer *tap1 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupDownloadAction)];
-    [downloadItem addGestureRecognizer:tap1];
-    [self addSubview:downloadItem];
-
-    UIView *settingsItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
-    settingsItem.tag = 30002;
-    settingsItem.center = CGPointMake(centerX + 40, y + 25);
-
-    UIImageView *settingsIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
-    settingsIcon.image = [[UIImage systemImageNamed:@"gearshape"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-    settingsIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-    [settingsItem addSubview:settingsIcon];
-
-    UILabel *settingsLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
-    settingsLabel.text = @"设置";
-    settingsLabel.font = [UIFont systemFontOfSize:12];
-    settingsLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-    settingsLabel.textAlignment = NSTextAlignmentCenter;
-    [settingsItem addSubview:settingsLabel];
-
-    UITapGestureRecognizer *tap2 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupSettingsAction)];
-    [settingsItem addGestureRecognizer:tap2];
-    [self addSubview:settingsItem];
 }
 %end
 
@@ -695,7 +691,6 @@ static void doDownloadVoiceFromMenu(id menuView) {
         audioURL = extractAudioURLFromMessage(message);
     }
 
-    // 如果消息中没有 URL，尝试从播放缓存中获取
     if (!audioURL.length && msgID) {
         audioURL = [[AWECADownloadManager shared] cachedURLForVID:msgID];
     }
