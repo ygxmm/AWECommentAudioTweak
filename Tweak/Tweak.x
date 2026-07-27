@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 最终稳定版（动态加高容器 + 按钮正常）
+// AWECommentAudioTweak - 最终完整版（群聊菜单正确加高，按钮完美融入）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -44,8 +44,6 @@ static void doVoiceSettings(id menuView);
 static id getMessageFromMenuView(UIView *menuView);
 static NSString *extractAudioURLFromMessage(id message);
 static id extractMessageFromCell(UIView *cell);
-static void aweca_groupDownloadAction(id self, SEL _cmd);
-static void aweca_groupSettingsAction(id self, SEL _cmd);
 
 // 存储最近长按的消息对象
 static id g_lastLongPressedMessage = nil;
@@ -436,22 +434,37 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 私信菜单注入（两行显示） ==========
+// ========== 统一菜单注入（群聊和私信共用，自适应高度） ==========
 %hook AWEIMEmojiReplyMenuView
 
 - (void)layoutSubviews {
     %orig;
+
+    // 如果是语音消息，调整 UICollectionView 高度并调整父容器高度
     if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         for (UIView *sub in self.subviews) {
             if ([sub isKindOfClass:[UICollectionView class]]) {
                 UICollectionView *cv = (UICollectionView *)sub;
-                if (cv.contentSize.height > cv.frame.size.height) {
+                CGFloat contentH = cv.contentSize.height;
+                if (contentH > cv.frame.size.height) {
                     CGRect frame = cv.frame;
-                    frame.size.height = cv.contentSize.height;
+                    frame.size.height = contentH;
                     cv.frame = frame;
                 }
                 cv.scrollEnabled = NO;
                 cv.clipsToBounds = NO;
+
+                // 如果父容器是 AFDHoverableContainerView，则增加其高度
+                UIView *parent = self.superview;
+                if ([parent isKindOfClass:NSClassFromString(@"AFDHoverableContainerView")]) {
+                    CGRect parentFrame = parent.frame;
+                    CGFloat neededHeight = CGRectGetMaxY(cv.frame) + 8;
+                    if (neededHeight > parentFrame.size.height) {
+                        parentFrame.size.height = neededHeight;
+                        parent.frame = parentFrame;
+                        parent.clipsToBounds = NO;
+                    }
+                }
                 break;
             }
         }
@@ -474,6 +487,7 @@ static void setupStackViewLayoutHook(void) {
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
         for (UIView *sub in cell.subviews) { [sub removeFromSuperview]; }
+        // 创建与原菜单项一致的样式
         UIView *iconBg = [[UIView alloc] initWithFrame:CGRectMake(1, 4, 48, 48)];
         iconBg.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
         iconBg.layer.cornerRadius = 10;
@@ -506,90 +520,6 @@ static void setupStackViewLayoutHook(void) {
 }
 
 %end
-
-// ========== 群聊菜单容器：动态加高并添加按钮 ==========
-%hook AFDHoverableContainerView
-
-- (void)layoutSubviews {
-    %orig;
-
-    // 防止重复添加按钮
-    if ([self viewWithTag:30001]) return;
-
-    // 获取消息对象（轻量查找）
-    id message = g_lastLongPressedMessage;
-    if (!message) {
-        message = getMessageFromMenuView(self);
-        if (message) g_lastLongPressedMessage = message;
-    }
-    if (!message || ![message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return;
-
-    // 计算内部内容的最大 Y 值
-    CGFloat contentMaxY = 0;
-    for (UIView *sub in self.subviews) {
-        if (sub.tag >= 30001) continue;
-        CGFloat subMaxY = CGRectGetMaxY(sub.frame);
-        if (subMaxY > contentMaxY) contentMaxY = subMaxY;
-    }
-
-    // 需要的高度：内容底部 + 54 点（按钮区域）
-    CGFloat neededHeight = contentMaxY + 54;
-    if (neededHeight > self.frame.size.height) {
-        CGRect f = self.frame;
-        f.size.height = neededHeight;
-        self.frame = f;
-        self.clipsToBounds = NO; // 防止裁剪
-    }
-
-    // 在底部添加下载和设置按钮
-    CGFloat centerX = self.bounds.size.width / 2;
-    CGFloat y = contentMaxY + 4;
-
-    UIView *downloadItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
-    downloadItem.tag = 30001;
-    downloadItem.center = CGPointMake(centerX - 40, y + 25);
-    UIImageView *downloadIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
-    downloadIcon.image = [[UIImage systemImageNamed:@"arrow.down.circle"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-    downloadIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-    [downloadItem addSubview:downloadIcon];
-    UILabel *downloadLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
-    downloadLabel.text = @"下载";
-    downloadLabel.font = [UIFont systemFontOfSize:12];
-    downloadLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-    downloadLabel.textAlignment = NSTextAlignmentCenter;
-    [downloadItem addSubview:downloadLabel];
-    UITapGestureRecognizer *tap1 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupDownloadAction)];
-    [downloadItem addGestureRecognizer:tap1];
-    [self addSubview:downloadItem];
-
-    UIView *settingsItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
-    settingsItem.tag = 30002;
-    settingsItem.center = CGPointMake(centerX + 40, y + 25);
-    UIImageView *settingsIcon = [[UIImageView alloc] initWithFrame:CGRectMake(18, 4, 24, 24)];
-    settingsIcon.image = [[UIImage systemImageNamed:@"gearshape"] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-    settingsIcon.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-    [settingsItem addSubview:settingsIcon];
-    UILabel *settingsLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 30, 50, 15)];
-    settingsLabel.text = @"设置";
-    settingsLabel.font = [UIFont systemFontOfSize:12];
-    settingsLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-    settingsLabel.textAlignment = NSTextAlignmentCenter;
-    [settingsItem addSubview:settingsLabel];
-    UITapGestureRecognizer *tap2 = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(aweca_groupSettingsAction)];
-    [settingsItem addGestureRecognizer:tap2];
-    [self addSubview:settingsItem];
-}
-
-%end
-
-// ========== 群聊按钮回调 ==========
-static void aweca_groupDownloadAction(id self, SEL _cmd) {
-    doDownloadVoiceFromMenu(self);
-}
-
-static void aweca_groupSettingsAction(id self, SEL _cmd) {
-    doVoiceSettings(self);
-}
 
 // ========== 下载和设置实现 ==========
 static void doDownloadVoiceFromMenu(id menuView) {
@@ -695,14 +625,4 @@ static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewControl
     setupAudioInputElementHook();
     setupAudioIconElementHook();
     setupStackViewLayoutHook();
-
-    Class hoverClass = NSClassFromString(@"AFDHoverableContainerView");
-    if (hoverClass) {
-        if (!class_respondsToSelector(hoverClass, @selector(aweca_groupDownloadAction))) {
-            class_addMethod(hoverClass, @selector(aweca_groupDownloadAction), (IMP)aweca_groupDownloadAction, "v@:");
-        }
-        if (!class_respondsToSelector(hoverClass, @selector(aweca_groupSettingsAction))) {
-            class_addMethod(hoverClass, @selector(aweca_groupSettingsAction), (IMP)aweca_groupSettingsAction, "v@:");
-        }
-    }
 }
