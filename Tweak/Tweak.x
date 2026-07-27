@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 完美融合版（修复编译错误，数据源注入）
+// AWECommentAudioTweak - 终极稳定版（数据源注入，不闪退，自适应布局）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -24,9 +24,7 @@
 
 // 菜单视图
 @interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDelegate, UICollectionViewDataSource>
-@property (nonatomic, strong) NSArray *menuItemList;
 @property (nonatomic, strong) UICollectionView *menuItemsCollectionView;
-- (void)showMenuForBubbleFrameInScreen:(id)arg0 tapLocationInScreen:(id)arg1 menuItemList:(id)arg2 menuPanelOptions:(unsigned long long)arg3 msgEmoticonList:(id)arg4 moreEmoticon:(BOOL)arg5 inView:(id)arg6 extra:(id)arg7;
 @end
 
 // 菜单单元格
@@ -128,18 +126,17 @@ static id getMessageFromMenuView(UIView *menuView) {
     return nil;
 }
 
-// 创建自定义菜单项（带图标名标记）
+// 创建自定义菜单项（仅标题，图标在 Cell 配置时设置）
 static id createMenuItem(NSString *title, NSString *iconSystemName) {
     Class modelClass = NSClassFromString(@"AWEIMCustomMenuModel");
     if (!modelClass) return nil;
     id item = [[modelClass alloc] init];
     [item setValue:title forKey:@"title"];
-    // 存储图标名称到关联对象，供后续强制设置图标使用
     objc_setAssociatedObject(item, kCustomMenuItemKey, iconSystemName, OBJC_ASSOCIATION_COPY_NONATOMIC);
     return item;
 }
 
-// ========== 评论区功能 ==========
+// ========== 评论区功能（保持不变） ==========
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
@@ -457,30 +454,82 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 核心：数据源注入，原生自动布局 ==========
+// ========== 菜单项注入（安全，不闪退，自适应布局） ==========
 %hook AWEIMEmojiReplyMenuView
 
-// 在菜单显示前修改数据源
-- (void)showMenuForBubbleFrameInScreen:(id)arg0 tapLocationInScreen:(id)arg1 menuItemList:(id)arg2 menuPanelOptions:(unsigned long long)arg3 msgEmoticonList:(id)arg4 moreEmoticon:(BOOL)arg5 inView:(id)arg6 extra:(id)arg7 {
-    NSMutableArray *newList = [arg2 mutableCopy] ?: [NSMutableArray array];
-    id downloadItem = createMenuItem(@"下载", @"arrow.down.circle");
-    id settingsItem = createMenuItem(@"设置", @"gearshape");
-    [newList addObject:downloadItem];
-    [newList addObject:settingsItem];
-    %orig(arg0, arg1, newList, arg3, arg4, arg5, arg6, arg7);
+- (void)layoutSubviews {
+    %orig; // 先让原生布局完成
+    if (!g_lastLongPressedMessage) return;
+
+    UICollectionView *cv = self.menuItemsCollectionView;
+    if (!cv) {
+        // 如果属性获取不到，手动查找
+        for (UIView *sub in self.subviews) {
+            if ([sub isKindOfClass:[UICollectionView class]]) {
+                cv = (UICollectionView *)sub;
+                break;
+            }
+        }
+    }
+    if (!cv) return;
+
+    // 根据内容自动调整父容器高度，避免重叠/截断
+    [cv layoutIfNeeded];
+    CGFloat neededHeight = cv.collectionViewLayout.collectionViewContentSize.height;
+    if (neededHeight > 0) {
+        // 更新 CollectionView 自身的高度
+        CGRect cvFrame = cv.frame;
+        if (fabs(cvFrame.size.height - neededHeight) > 0.5) {
+            cvFrame.size.height = neededHeight;
+            cv.frame = cvFrame;
+        }
+
+        // 调整 AFDHoverableContainerView 的高度
+        UIView *parent = self.superview;
+        while (parent && ![parent isKindOfClass:NSClassFromString(@"AFDHoverableContainerView")]) {
+            parent = parent.superview;
+        }
+        if (parent) {
+            CGFloat totalHeight = neededHeight + 16; // 加上一些边距
+            CGRect pf = parent.frame;
+            if (fabs(pf.size.height - totalHeight) > 0.5) {
+                pf.size.height = totalHeight;
+                parent.frame = pf;
+            }
+        }
+    }
 }
 
-// 处理点击事件（拦截我们自己添加的项）
+- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
+    NSInteger originalCount = %orig;
+    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+        return originalCount + 2;
+    }
+    return originalCount;
+}
+
+- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
+    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
+    if (indexPath.item >= originalCount) {
+        AWEIMEmojiReplyMenuViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
+        id menuItem = nil;
+        if (indexPath.item == originalCount) {
+            menuItem = createMenuItem(@"下载", @"arrow.down.circle");
+        } else {
+            menuItem = createMenuItem(@"设置", @"gearshape");
+        }
+        [cell configWithMenuItem:menuItem];
+        return cell;
+    }
+    return %orig;
+}
+
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
-    NSInteger totalItems = [collectionView numberOfItemsInSection:0];
-    NSInteger originalCount = totalItems - 2; // 原生的个数
+    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
         if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
-            if (indexPath.item == originalCount) {
-                doDownloadVoiceFromMenu(self);
-            } else {
-                doVoiceSettings(self);
-            }
+            if (indexPath.item == originalCount) doDownloadVoiceFromMenu(self);
+            else doVoiceSettings(self);
         } else {
             [AWECAUtils showToast:@"仅语音消息支持"];
         }
@@ -491,11 +540,10 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 强制图标显示 ==========
+// ========== 强制图标显示（Hook 单元格配置） ==========
 %hook AWEIMEmojiReplyMenuViewCell
 - (void)configWithMenuItem:(id)menuItem {
-    %orig; // 原生配置（设置标题等）
-    // 如果是我们的自定义菜单项，强制设置图标
+    %orig;
     NSString *iconName = objc_getAssociatedObject(menuItem, kCustomMenuItemKey);
     if (iconName) {
         UIImage *icon = [UIImage systemImageNamed:iconName];
@@ -507,7 +555,7 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 下载和设置实现 ==========
+// ========== 下载和设置实现（不变） ==========
 static void doDownloadVoiceFromMenu(id menuView) {
     id message = g_lastLongPressedMessage;
     if (!message) message = getMessageFromMenuView((UIView *)menuView);
