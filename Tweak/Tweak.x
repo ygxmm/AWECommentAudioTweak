@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 终极调试版（屏蔽弃用警告，打印所有窗口视图树）
+// AWECommentAudioTweak - 稳定文字版（无图标）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -12,7 +12,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
-// ---------- 私信/群聊相关类声明 ----------
+// 私信/群聊相关类声明
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
 @end
@@ -21,24 +21,16 @@
 @end
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
-
-// 🔧 占位菜单类（待替换为调试得到的类名）
-@interface AWEIMMessageLongPressMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
+@interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
 @property (nonatomic, strong) UICollectionView *collectionView;
 @end
-@interface AWEIMMessageLongPressMenuViewCell : UICollectionViewCell
-- (void)configWithMenuItem:(id)menuItem;
-@end
-
 @interface AWEIMMessageListViewController : UIViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
-- (void)awe_dumpAllWindows; // 调试用
-- (void)awe_dumpView:(UIView *)view depth:(int)depth maxDepth:(int)maxDepth;
 @end
 @interface AFDHoverableContainerView : UIView
 @end
 
-// ---------- 前置声明 ----------
+// 前置声明
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
@@ -53,7 +45,6 @@ static id getMessageFromMenuView(UIView *menuView);
 static NSString *extractAudioURLFromMessage(id message);
 static id extractMessageFromCell(UIView *cell);
 
-// 全局消息对象
 static id g_lastLongPressedMessage = nil;
 
 // 获取真实音频时长
@@ -124,22 +115,17 @@ static id getMessageFromMenuView(UIView *menuView) {
     return nil;
 }
 
-// 创建一个 AWEIMCustomMenuModel 实例（修复图标显示问题）
+// 创建菜单项（仅设置 title，图标暂时无效）
 static id createMenuItem(NSString *title, NSString *iconSystemName) {
     Class modelClass = NSClassFromString(@"AWEIMCustomMenuModel");
     if (!modelClass) return nil;
     id item = [[modelClass alloc] init];
     [item setValue:title forKey:@"title"];
-    UIImage *icon = [UIImage systemImageNamed:iconSystemName];
-    if (icon) {
-        @try { [item setValue:icon forKey:@"icon"]; } @catch (NSException *e) {}
-        @try { [item setValue:icon forKey:@"iconImage"]; } @catch (NSException *e) {}
-        @try { [item setValue:icon forKey:@"image"]; } @catch (NSException *e) {}
-    }
+    // 图标暂时不设置，保持文字模式
     return item;
 }
 
-// ========== 评论区功能（保持不变） ==========
+// ========== 评论区功能 ==========
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
@@ -449,51 +435,20 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 长按消息记录（含终极调试 – 已屏蔽弃用警告） ==========
+// ========== 长按菜单回调 ==========
 %hook AWEIMMessageListViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
     g_lastLongPressedMessage = message;
-    NSLog(@"[AWE] 长按消息已记录：%@", [message class]);
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        // 直接在 block 内遍历窗口，无需额外注入方法
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        NSArray *allWindows = [UIApplication sharedApplication].windows;
-#pragma clang diagnostic pop
-        for (UIWindow *window in allWindows) {
-            NSLog(@"=== 窗口: %@ (hidden=%d) ===", window, window.hidden);
-            [self awe_dumpViewInline:window depth:0 maxDepth:3];
-        }
-    });
-}
-
-// 内联的辅助递归方法（可直接调用）
-- (void)awe_dumpViewInline:(UIView *)view depth:(int)depth maxDepth:(int)maxDepth {
-    if (depth > maxDepth) return;
-    NSLog(@"%*s%@", depth * 2, "", NSStringFromClass([view class]));
-    for (UIView *sub in view.subviews) {
-        [self awe_dumpViewInline:sub depth:depth+1 maxDepth:maxDepth];
-    }
 }
 %end
 
-- (void)awe_dumpView:(UIView *)view depth:(int)depth maxDepth:(int)maxDepth {
-    if (depth > maxDepth) return;
-    NSLog(@"%*s%@", depth * 2, "", NSStringFromClass([view class]));
-    for (UIView *sub in view.subviews) {
-        [self awe_dumpView:sub depth:depth+1 maxDepth:maxDepth];
-    }
-}
-%end
-
-// ========== 核心：Hook 菜单视图（需替换为调试得到的类名） ==========
-%hook AWEIMMessageLongPressMenuView
+// ========== 菜单项注入（纯文字版） ==========
+%hook AWEIMEmojiReplyMenuView
 
 - (void)layoutSubviews {
     %orig;
-    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+    if (g_lastLongPressedMessage) {
         for (UIView *sub in self.subviews) {
             if ([sub isKindOfClass:[UICollectionView class]]) {
                 UICollectionView *cv = (UICollectionView *)sub;
@@ -525,7 +480,7 @@ static void setupStackViewLayoutHook(void) {
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
-    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+    if (g_lastLongPressedMessage) {
         return originalCount + 2;
     }
     return originalCount;
@@ -534,24 +489,14 @@ static void setupStackViewLayoutHook(void) {
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
-        static NSString *cellReuseID = nil;
-        if (!cellReuseID) {
-            if (originalCount > 0) {
-                UICollectionViewCell *firstCell = [collectionView cellForItemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
-                cellReuseID = firstCell.reuseIdentifier;
-            }
-            if (!cellReuseID) {
-                cellReuseID = @"AWEIMMessageLongPressMenuViewCell"; // 兜底
-            }
-        }
-        id cell = [collectionView dequeueReusableCellWithReuseIdentifier:cellReuseID forIndexPath:indexPath];
+        id cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
         id menuItem = nil;
         if (indexPath.item == originalCount) {
             menuItem = createMenuItem(@"下载", @"arrow.down.circle");
         } else {
             menuItem = createMenuItem(@"设置", @"gearshape");
         }
-        if ([cell respondsToSelector:@selector(configWithMenuItem:)]) {
+        if (menuItem && [cell respondsToSelector:@selector(configWithMenuItem:)]) {
             [cell configWithMenuItem:menuItem];
         }
         return cell;
