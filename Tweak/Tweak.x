@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 稳定文字版（修复编译错误）
+// AWECommentAudioTweak - 最终完整版（图标+文字，编译安全）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -12,7 +12,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
-// ---------- 私信/群聊相关类声明 ----------
+// ========== 私有类声明 ==========
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
 @end
@@ -22,14 +22,16 @@
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
 
-// 菜单视图
-@interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
-@property (nonatomic, strong) UICollectionView *collectionView;
+// 菜单视图 (已通过头文件确认)
+@interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDelegate, UICollectionViewDataSource>
+@property (nonatomic, strong) UICollectionView *menuItemsCollectionView;
 @end
 
-// 🔧 关键声明：告诉编译器 configWithMenuItem: 存在
+// 菜单单元格 (已通过头文件确认)
 @interface AWEIMEmojiReplyMenuViewCell : UICollectionViewCell
 - (void)configWithMenuItem:(id)menuItem;
+@property (nonatomic, strong) UIImageView *imageView;
+@property (nonatomic, strong) UILabel *textLabel;
 @end
 
 @interface AWEIMMessageListViewController : UIViewController
@@ -38,7 +40,7 @@
 @interface AFDHoverableContainerView : UIView
 @end
 
-// ---------- 前置声明 ----------
+// ========== 前置声明 ==========
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
@@ -123,8 +125,8 @@ static id getMessageFromMenuView(UIView *menuView) {
     return nil;
 }
 
-// 创建菜单项（仅标题，无图标）
-static id createMenuItem(NSString *title, NSString *iconSystemName) {
+// 创建菜单项（仅标题，图标通过 cell.imageView 直接设置）
+static id createMenuItem(NSString *title) {
     Class modelClass = NSClassFromString(@"AWEIMCustomMenuModel");
     if (!modelClass) return nil;
     id item = [[modelClass alloc] init];
@@ -450,36 +452,33 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 菜单项注入（纯文字，编译安全） ==========
+// ========== 菜单项注入（图标必显） ==========
 %hook AWEIMEmojiReplyMenuView
 
 - (void)layoutSubviews {
     %orig;
     if (g_lastLongPressedMessage) {
-        for (UIView *sub in self.subviews) {
-            if ([sub isKindOfClass:[UICollectionView class]]) {
-                UICollectionView *cv = (UICollectionView *)sub;
-                [cv reloadData];
-                CGFloat contentH = cv.contentSize.height;
-                if (contentH > cv.frame.size.height) {
-                    CGRect frame = cv.frame;
-                    frame.size.height = contentH;
-                    cv.frame = frame;
-                }
-                cv.scrollEnabled = NO;
-                cv.clipsToBounds = NO;
+        UICollectionView *cv = [self valueForKey:@"menuItemsCollectionView"];
+        if (cv) {
+            [cv reloadData];
+            CGFloat contentH = cv.contentSize.height;
+            if (contentH > cv.frame.size.height) {
+                CGRect frame = cv.frame;
+                frame.size.height = contentH;
+                cv.frame = frame;
+            }
+            cv.scrollEnabled = NO;
+            cv.clipsToBounds = NO;
 
-                UIView *parent = self.superview;
-                if ([parent isKindOfClass:NSClassFromString(@"AFDHoverableContainerView")]) {
-                    CGRect parentFrame = parent.frame;
-                    CGFloat neededHeight = CGRectGetMaxY(cv.frame) + 8;
-                    if (neededHeight > parentFrame.size.height) {
-                        parentFrame.size.height = neededHeight;
-                        parent.frame = parentFrame;
-                        parent.clipsToBounds = NO;
-                    }
+            UIView *parent = self.superview;
+            if ([parent isKindOfClass:NSClassFromString(@"AFDHoverableContainerView")]) {
+                CGRect parentFrame = parent.frame;
+                CGFloat neededHeight = CGRectGetMaxY(cv.frame) + 8;
+                if (neededHeight > parentFrame.size.height) {
+                    parentFrame.size.height = neededHeight;
+                    parent.frame = parentFrame;
+                    parent.clipsToBounds = NO;
                 }
-                break;
             }
         }
     }
@@ -497,13 +496,26 @@ static void setupStackViewLayoutHook(void) {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
         AWEIMEmojiReplyMenuViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
+        
         id menuItem = nil;
+        UIImage *icon = nil;
         if (indexPath.item == originalCount) {
-            menuItem = createMenuItem(@"下载", @"arrow.down.circle");
+            menuItem = createMenuItem(@"下载");
+            icon = [UIImage systemImageNamed:@"arrow.down.circle"];
         } else {
-            menuItem = createMenuItem(@"设置", @"gearshape");
+            menuItem = createMenuItem(@"设置");
+            icon = [UIImage systemImageNamed:@"gearshape"];
         }
+        
         [cell configWithMenuItem:menuItem];
+        
+        // 直接设置图标并配置显示模式
+        if (icon && cell.imageView) {
+            cell.imageView.image = icon;
+            cell.imageView.contentMode = UIViewContentModeScaleAspectFit;
+            cell.imageView.tintColor = nil; // 避免被系统着色覆盖
+        }
+        
         return cell;
     }
     return %orig;
