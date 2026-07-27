@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 终极稳定版（数据源注入，不闪退，自适应布局）
+// AWECommentAudioTweak - 最终完美高度自适应版
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -126,7 +126,7 @@ static id getMessageFromMenuView(UIView *menuView) {
     return nil;
 }
 
-// 创建自定义菜单项（仅标题，图标在 Cell 配置时设置）
+// 创建自定义菜单项（仅标题，图标通过 Cell 配置时设置）
 static id createMenuItem(NSString *title, NSString *iconSystemName) {
     Class modelClass = NSClassFromString(@"AWEIMCustomMenuModel");
     if (!modelClass) return nil;
@@ -454,16 +454,15 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 菜单项注入（安全，不闪退，自适应布局） ==========
+// ========== 菜单项注入 + 动态高度适配 ==========
 %hook AWEIMEmojiReplyMenuView
 
 - (void)layoutSubviews {
-    %orig; // 先让原生布局完成
+    %orig; // 原生布局先执行
     if (!g_lastLongPressedMessage) return;
 
     UICollectionView *cv = self.menuItemsCollectionView;
     if (!cv) {
-        // 如果属性获取不到，手动查找
         for (UIView *sub in self.subviews) {
             if ([sub isKindOfClass:[UICollectionView class]]) {
                 cv = (UICollectionView *)sub;
@@ -473,30 +472,36 @@ static void setupStackViewLayoutHook(void) {
     }
     if (!cv) return;
 
-    // 根据内容自动调整父容器高度，避免重叠/截断
+    // 1. 强制刷新，获取真实内容高度
+    [cv.collectionViewLayout invalidateLayout];
     [cv layoutIfNeeded];
-    CGFloat neededHeight = cv.collectionViewLayout.collectionViewContentSize.height;
-    if (neededHeight > 0) {
-        // 更新 CollectionView 自身的高度
-        CGRect cvFrame = cv.frame;
-        if (fabs(cvFrame.size.height - neededHeight) > 0.5) {
-            cvFrame.size.height = neededHeight;
-            cv.frame = cvFrame;
-        }
+    CGFloat contentHeight = cv.collectionViewLayout.collectionViewContentSize.height;
+    if (contentHeight <= 0) return;
 
-        // 调整 AFDHoverableContainerView 的高度
-        UIView *parent = self.superview;
-        while (parent && ![parent isKindOfClass:NSClassFromString(@"AFDHoverableContainerView")]) {
-            parent = parent.superview;
-        }
-        if (parent) {
-            CGFloat totalHeight = neededHeight + 16; // 加上一些边距
-            CGRect pf = parent.frame;
-            if (fabs(pf.size.height - totalHeight) > 0.5) {
-                pf.size.height = totalHeight;
-                parent.frame = pf;
-            }
-        }
+    // 2. 调整 CollectionView 的高度（保持 origin 不变）
+    CGRect cvFrame = cv.frame;
+    if (fabs(cvFrame.size.height - contentHeight) > 0.5) {
+        cvFrame.size.height = contentHeight;
+        cv.frame = cvFrame;
+    }
+
+    // 3. 定位 AFDHoverableContainerView
+    UIView *container = self.superview;
+    while (container && ![container isKindOfClass:NSClassFromString(@"AFDHoverableContainerView")]) {
+        container = container.superview;
+    }
+    if (!container) return;
+
+    // 计算 CollectionView 的底部在容器中的 y 值
+    CGRect cvInContainer = [cv convertRect:cv.bounds toView:container];
+    CGFloat cvBottom = CGRectGetMaxY(cvInContainer);
+    // 容器新高度 = cv 底部 + 8pt 边距
+    CGFloat newContainerHeight = cvBottom + 8.0;
+
+    CGRect containerFrame = container.frame;
+    if (fabs(containerFrame.size.height - newContainerHeight) > 0.5) {
+        containerFrame.size.height = newContainerHeight;
+        container.frame = containerFrame;
     }
 }
 
@@ -540,7 +545,7 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 强制图标显示（Hook 单元格配置） ==========
+// ========== 强制图标显示 ==========
 %hook AWEIMEmojiReplyMenuViewCell
 - (void)configWithMenuItem:(id)menuItem {
     %orig;
