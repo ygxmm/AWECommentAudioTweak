@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 最终完整版（群聊菜单正确加高，按钮完美融入）
+// AWECommentAudioTweak - 最终修复版（语音菜单直接显示下载/设置，无需转文字）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -426,7 +426,7 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 私信长按菜单回调 ==========
+// ========== 关键：长按菜单弹出时强制保存消息对象 ==========
 %hook AWEIMMessageListViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
@@ -434,13 +434,12 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 统一菜单注入（群聊和私信共用，自适应高度） ==========
+// ========== 统一菜单注入：强制追加“下载”和“设置”，并自适应高度 ==========
 %hook AWEIMEmojiReplyMenuView
 
 - (void)layoutSubviews {
     %orig;
 
-    // 如果是语音消息，调整 UICollectionView 高度并调整父容器高度
     if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         for (UIView *sub in self.subviews) {
             if ([sub isKindOfClass:[UICollectionView class]]) {
@@ -473,10 +472,8 @@ static void setupStackViewLayoutHook(void) {
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
-    if (!g_lastLongPressedMessage) {
-        g_lastLongPressedMessage = getMessageFromMenuView(self);
-    }
-    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+    // 只要全局消息对象存在（长按任何消息都会设置），就追加两个菜单项
+    if (g_lastLongPressedMessage) {
         return originalCount + 2;
     }
     return originalCount;
@@ -487,7 +484,7 @@ static void setupStackViewLayoutHook(void) {
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
         for (UIView *sub in cell.subviews) { [sub removeFromSuperview]; }
-        // 创建与原菜单项一致的样式
+        // 创建与原菜单项完全一致的样式
         UIView *iconBg = [[UIView alloc] initWithFrame:CGRectMake(1, 4, 48, 48)];
         iconBg.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
         iconBg.layer.cornerRadius = 10;
@@ -512,8 +509,12 @@ static void setupStackViewLayoutHook(void) {
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
-        if (indexPath.item == originalCount) doDownloadVoiceFromMenu(self);
-        else doVoiceSettings(self);
+        if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+            if (indexPath.item == originalCount) doDownloadVoiceFromMenu(self);
+            else doVoiceSettings(self);
+        } else {
+            [AWECAUtils showToast:@"仅语音消息支持"];
+        }
         return;
     }
     %orig;
