@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 稳定文字版（无图标）
+// AWECommentAudioTweak - 稳定文字版（修复编译错误）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -12,7 +12,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
-// 私信/群聊相关类声明
+// ---------- 私信/群聊相关类声明 ----------
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
 @end
@@ -21,16 +21,24 @@
 @end
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
+
+// 菜单视图
 @interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
 @property (nonatomic, strong) UICollectionView *collectionView;
 @end
+
+// 🔧 关键声明：告诉编译器 configWithMenuItem: 存在
+@interface AWEIMEmojiReplyMenuViewCell : UICollectionViewCell
+- (void)configWithMenuItem:(id)menuItem;
+@end
+
 @interface AWEIMMessageListViewController : UIViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
 @end
 @interface AFDHoverableContainerView : UIView
 @end
 
-// 前置声明
+// ---------- 前置声明 ----------
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
@@ -101,7 +109,7 @@ static id extractMessageFromCell(UIView *cell) {
     return nil;
 }
 
-// 从菜单视图查找消息（轻量）
+// 从菜单视图查找消息
 static id getMessageFromMenuView(UIView *menuView) {
     UIView *current = menuView;
     while (current) {
@@ -115,13 +123,12 @@ static id getMessageFromMenuView(UIView *menuView) {
     return nil;
 }
 
-// 创建菜单项（仅设置 title，图标暂时无效）
+// 创建菜单项（仅标题，无图标）
 static id createMenuItem(NSString *title, NSString *iconSystemName) {
     Class modelClass = NSClassFromString(@"AWEIMCustomMenuModel");
     if (!modelClass) return nil;
     id item = [[modelClass alloc] init];
     [item setValue:title forKey:@"title"];
-    // 图标暂时不设置，保持文字模式
     return item;
 }
 
@@ -443,7 +450,7 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 菜单项注入（纯文字版） ==========
+// ========== 菜单项注入（纯文字，编译安全） ==========
 %hook AWEIMEmojiReplyMenuView
 
 - (void)layoutSubviews {
@@ -489,16 +496,14 @@ static void setupStackViewLayoutHook(void) {
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
-        id cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
+        AWEIMEmojiReplyMenuViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
         id menuItem = nil;
         if (indexPath.item == originalCount) {
             menuItem = createMenuItem(@"下载", @"arrow.down.circle");
         } else {
             menuItem = createMenuItem(@"设置", @"gearshape");
         }
-        if (menuItem && [cell respondsToSelector:@selector(configWithMenuItem:)]) {
-            [cell configWithMenuItem:menuItem];
-        }
+        [cell configWithMenuItem:menuItem];
         return cell;
     }
     return %orig;
