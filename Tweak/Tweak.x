@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 终极强制刷新版（群聊语音直接显示下载/设置，无需转文字）
+// AWECommentAudioTweak - 最终原生模型版（利用 AWEIMCustomMenuModel 配置菜单项）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -114,6 +114,19 @@ static id getMessageFromMenuView(UIView *menuView) {
         current = current.superview;
     }
     return nil;
+}
+
+// 创建一个 AWEIMCustomMenuModel 实例（用于“下载”或“设置”）
+static id createMenuItem(NSString *title, NSString *iconSystemName) {
+    Class modelClass = NSClassFromString(@"AWEIMCustomMenuModel");
+    if (!modelClass) return nil;
+    id item = [[modelClass alloc] init];
+    [item setValue:title forKey:@"title"];
+    UIImage *icon = [UIImage systemImageNamed:iconSystemName];
+    if (icon) {
+        [item setValue:icon forKey:@"icon"];
+    }
+    return item;
 }
 
 // ========== 评论区功能（保持不变） ==========
@@ -434,7 +447,7 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 核心：强制刷新 + 自动高度 + 原生样式菜单注入 ==========
+// ========== 核心：利用原生 configWithMenuItem: 配置菜单项，完美复刻样式 ==========
 %hook AWEIMEmojiReplyMenuView
 
 - (void)layoutSubviews {
@@ -444,7 +457,6 @@ static void setupStackViewLayoutHook(void) {
         for (UIView *sub in self.subviews) {
             if ([sub isKindOfClass:[UICollectionView class]]) {
                 UICollectionView *cv = (UICollectionView *)sub;
-                // 强制刷新，让系统获取到我们追加的 Cell
                 [cv reloadData];
                 CGFloat contentH = cv.contentSize.height;
                 if (contentH > cv.frame.size.height) {
@@ -483,21 +495,16 @@ static void setupStackViewLayoutHook(void) {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
-        for (UIView *sub in cell.subviews) { [sub removeFromSuperview]; }
-        UIImageView *iconView = [[UIImageView alloc] initWithFrame:CGRectMake(13, 8, 24, 24)];
-        iconView.contentMode = UIViewContentModeScaleAspectFit;
-        NSString *iconName = (indexPath.item == originalCount) ? @"arrow.down.circle" : @"gearshape";
-        iconView.image = [[UIImage systemImageNamed:iconName] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-        iconView.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-        [cell addSubview:iconView];
-
-        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, 36, 50, 15)];
-        label.text = (indexPath.item == originalCount) ? @"下载" : @"设置";
-        label.font = [UIFont systemFontOfSize:12];
-        label.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-        label.textAlignment = NSTextAlignmentCenter;
-        [cell addSubview:label];
-        cell.accessibilityLabel = label.text;
+        // 构造菜单模型并配置
+        id menuItem = nil;
+        if (indexPath.item == originalCount) {
+            menuItem = createMenuItem(@"下载", @"arrow.down.circle");
+        } else {
+            menuItem = createMenuItem(@"设置", @"gearshape");
+        }
+        if (menuItem && [cell respondsToSelector:@selector(configWithMenuItem:)]) {
+            [cell configWithMenuItem:menuItem];
+        }
         return cell;
     }
     return %orig;
