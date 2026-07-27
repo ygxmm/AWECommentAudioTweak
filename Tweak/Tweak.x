@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 完美融合版（数据源注入，原生布局）
+// AWECommentAudioTweak - 完美融合版（修复编译错误，数据源注入）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -457,29 +457,24 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 核心：注入数据源，完美融合原生布局 ==========
+// ========== 核心：数据源注入，原生自动布局 ==========
 %hook AWEIMEmojiReplyMenuView
 
 // 在菜单显示前修改数据源
 - (void)showMenuForBubbleFrameInScreen:(id)arg0 tapLocationInScreen:(id)arg1 menuItemList:(id)arg2 menuPanelOptions:(unsigned long long)arg3 msgEmoticonList:(id)arg4 moreEmoticon:(BOOL)arg5 inView:(id)arg6 extra:(id)arg7 {
-    NSMutableArray *newList = [menuItemList mutableCopy] ?: [NSMutableArray array];
-    // 添加我们自己的功能键
+    NSMutableArray *newList = [arg2 mutableCopy] ?: [NSMutableArray array];
     id downloadItem = createMenuItem(@"下载", @"arrow.down.circle");
     id settingsItem = createMenuItem(@"设置", @"gearshape");
     [newList addObject:downloadItem];
     [newList addObject:settingsItem];
-    // 替换参数，让原生方法使用新列表
-    menuItemList = newList;
-    %orig;
+    %orig(arg0, arg1, newList, arg3, arg4, arg5, arg6, arg7);
 }
 
 // 处理点击事件（拦截我们自己添加的项）
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
-    // 获取总菜单项数（原生+我们的2个）
     NSInteger totalItems = [collectionView numberOfItemsInSection:0];
-    NSInteger originalCount = totalItems - 2; // 原生菜单项数
+    NSInteger originalCount = totalItems - 2; // 原生的个数
     if (indexPath.item >= originalCount) {
-        // 点击的是我们添加的项
         if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
             if (indexPath.item == originalCount) {
                 doDownloadVoiceFromMenu(self);
@@ -491,17 +486,16 @@ static void setupStackViewLayoutHook(void) {
         }
         return;
     }
-    // 原生菜单项，调用原方法
     %orig;
 }
 
 %end
 
-// ========== 强制图标显示（hook 单元格配置） ==========
+// ========== 强制图标显示 ==========
 %hook AWEIMEmojiReplyMenuViewCell
 - (void)configWithMenuItem:(id)menuItem {
-    %orig; // 先调用原生配置（设置标题等）
-    // 如果是我们的自定义菜单项（有关联对象），强制设置图标
+    %orig; // 原生配置（设置标题等）
+    // 如果是我们的自定义菜单项，强制设置图标
     NSString *iconName = objc_getAssociatedObject(menuItem, kCustomMenuItemKey);
     if (iconName) {
         UIImage *icon = [UIImage systemImageNamed:iconName];
