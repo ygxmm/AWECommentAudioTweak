@@ -16,7 +16,8 @@ AWECommentAudioTweak_FILES = Tweak/Tweak.x \
 	Tweak/AWECATTSManager.m \
 	Tweak/AWECATTSConfigController.m \
 	Tweak/AWECATTSController.m \
-	Tweak/AWECATTSVoiceListController.m
+	Tweak/AWECATTSVoiceListController.m \
+	Tweak/AWECAPrivateChat.x
 
 AWECommentAudioTweak_CFLAGS = -fobjc-arc
 AWECommentAudioTweak_LDFLAGS = -Xlinker -not_for_dyld_shared_cache
