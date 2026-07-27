@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 完整版（含调试代码，可自动定位菜单类名）
+// AWECommentAudioTweak - 完整版（修复 keyWindow 编译错误）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -455,9 +455,12 @@ static void setupStackViewLayoutHook(void) {
     g_lastLongPressedMessage = message;
     NSLog(@"[AWE] 长按消息已记录：%@", [message class]);
 
-    // 0.5 秒后扫描窗口内所有 UICollectionView，定位菜单视图类
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // 忽略 keyWindow 弃用警告
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         UIWindow *window = [UIApplication sharedApplication].keyWindow;
+#pragma clang diagnostic pop
         [self awe_scanCollectionViews:window depth:0];
     });
 }
