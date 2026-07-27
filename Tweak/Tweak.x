@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 最终稳定完整版（Hook setMenuItemList，完美融合）
+// AWECommentAudioTweak - 最终编译通过版（Hook setMenuItemList，完美融合）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -199,6 +199,7 @@ static id createMenuItem(NSString *title, NSString *iconSystemName) {
 }
 %end
 
+// ========== 音频预览 Bubble Hook ==========
 static void (*orig_generateAudioPreviewBubble)(id, SEL, id);
 static void hook_generateAudioPreviewBubble(id self, SEL _cmd, id recordedModel) {
     if (recordedModel && [AWECAAudioReplacer shared].enabled) {
@@ -223,7 +224,7 @@ static void setupAudioInputElementHook(void) {
     }
 }
 
-// ========== AI 按钮布局更新 ==========
+// ========== AI 按钮布局更新（保持不变） ==========
 static void aweca_updateAIButtonPosition(UIView *stackView) {
     UIView *aiContainer = [stackView viewWithTag:19528];
     if (!aiContainer) return;
@@ -475,8 +476,7 @@ static void setupStackViewLayoutHook(void) {
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     NSArray *items = self.menuItemList;
     NSInteger total = items.count;
-    if (total < 2) { %orig; return; }
-    NSInteger originalCount = total - 2; // 原生个数
+    NSInteger originalCount = total - 2;
     if (indexPath.item >= originalCount) {
         if (indexPath.item == originalCount) doDownloadVoiceFromMenu(self);
         else if (indexPath.item == originalCount + 1) doVoiceSettings(self);
@@ -484,13 +484,12 @@ static void setupStackViewLayoutHook(void) {
     }
     %orig;
 }
-
 %end
 
 // ========== 强制图标显示 ==========
 %hook AWEIMEmojiReplyMenuViewCell
 - (void)configWithMenuItem:(id)menuItem {
-    %orig; // 原生配置（设置标题等）
+    %orig;
     NSString *iconName = objc_getAssociatedObject(menuItem, kCustomMenuItemKey);
     if (iconName) {
         UIImage *icon = [UIImage systemImageNamed:iconName];
