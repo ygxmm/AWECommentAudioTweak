@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 最终稳定版（动态布局 + 图标必显）
+// AWECommentAudioTweak - 完美融合版（数据源注入，原生布局）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -24,7 +24,9 @@
 
 // 菜单视图
 @interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDelegate, UICollectionViewDataSource>
+@property (nonatomic, strong) NSArray *menuItemList;
 @property (nonatomic, strong) UICollectionView *menuItemsCollectionView;
+- (void)showMenuForBubbleFrameInScreen:(id)arg0 tapLocationInScreen:(id)arg1 menuItemList:(id)arg2 menuPanelOptions:(unsigned long long)arg3 msgEmoticonList:(id)arg4 moreEmoticon:(BOOL)arg5 inView:(id)arg6 extra:(id)arg7;
 @end
 
 // 菜单单元格
@@ -56,6 +58,7 @@ static NSString *extractAudioURLFromMessage(id message);
 static id extractMessageFromCell(UIView *cell);
 
 static id g_lastLongPressedMessage = nil;
+static const void *kCustomMenuItemKey = &kCustomMenuItemKey;
 
 // 获取真实音频时长
 static double realAudioDuration(NSString *filePath) {
@@ -125,12 +128,14 @@ static id getMessageFromMenuView(UIView *menuView) {
     return nil;
 }
 
-// 创建菜单项（仅标题，图标通过 cell.imageView 直接设置）
-static id createMenuItem(NSString *title) {
+// 创建自定义菜单项（带图标名标记）
+static id createMenuItem(NSString *title, NSString *iconSystemName) {
     Class modelClass = NSClassFromString(@"AWEIMCustomMenuModel");
     if (!modelClass) return nil;
     id item = [[modelClass alloc] init];
     [item setValue:title forKey:@"title"];
+    // 存储图标名称到关联对象，供后续强制设置图标使用
+    objc_setAssociatedObject(item, kCustomMenuItemKey, iconSystemName, OBJC_ASSOCIATION_COPY_NONATOMIC);
     return item;
 }
 
@@ -452,95 +457,60 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 菜单项注入（动态布局 + 图标必显） ==========
+// ========== 核心：注入数据源，完美融合原生布局 ==========
 %hook AWEIMEmojiReplyMenuView
 
-- (void)layoutSubviews {
+// 在菜单显示前修改数据源
+- (void)showMenuForBubbleFrameInScreen:(id)arg0 tapLocationInScreen:(id)arg1 menuItemList:(id)arg2 menuPanelOptions:(unsigned long long)arg3 msgEmoticonList:(id)arg4 moreEmoticon:(BOOL)arg5 inView:(id)arg6 extra:(id)arg7 {
+    NSMutableArray *newList = [menuItemList mutableCopy] ?: [NSMutableArray array];
+    // 添加我们自己的功能键
+    id downloadItem = createMenuItem(@"下载", @"arrow.down.circle");
+    id settingsItem = createMenuItem(@"设置", @"gearshape");
+    [newList addObject:downloadItem];
+    [newList addObject:settingsItem];
+    // 替换参数，让原生方法使用新列表
+    menuItemList = newList;
     %orig;
-    if (!g_lastLongPressedMessage) return;
-    
-    UICollectionView *cv = [self valueForKey:@"menuItemsCollectionView"];
-    if (!cv) return;
-    
-    // 强制刷新布局
-    [cv.collectionViewLayout invalidateLayout];
-    [cv reloadData];
-    [cv layoutIfNeeded];
-    
-    // 根据内容自动调整高度
-    CGFloat newHeight = cv.collectionViewLayout.collectionViewContentSize.height;
-    if (newHeight > 0) {
-        CGRect cvFrame = cv.frame;
-        cvFrame.size.height = newHeight;
-        cv.frame = cvFrame;
-    }
-    
-    cv.scrollEnabled = NO;
-    cv.clipsToBounds = NO;
-    
-    // 调整父容器
-    UIView *parent = self.superview;
-    if ([parent isKindOfClass:NSClassFromString(@"AFDHoverableContainerView")]) {
-        CGRect parentFrame = parent.frame;
-        CGFloat neededHeight = CGRectGetMaxY(cv.frame) + 8;
-        if (fabs(neededHeight - parentFrame.size.height) > 0.5) {
-            parentFrame.size.height = neededHeight;
-            parent.frame = parentFrame;
-            parent.clipsToBounds = NO;
-        }
-    }
 }
 
-- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
-    NSInteger originalCount = %orig;
-    if (g_lastLongPressedMessage) {
-        return originalCount + 2;
-    }
-    return originalCount;
-}
-
-- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
-    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
-    if (indexPath.item >= originalCount) {
-        AWEIMEmojiReplyMenuViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
-        
-        id menuItem = nil;
-        UIImage *icon = nil;
-        if (indexPath.item == originalCount) {
-            menuItem = createMenuItem(@"下载");
-            icon = [UIImage systemImageNamed:@"arrow.down.circle"];
-        } else {
-            menuItem = createMenuItem(@"设置");
-            icon = [UIImage systemImageNamed:@"gearshape"];
-        }
-        
-        [cell configWithMenuItem:menuItem];
-        
-        // 图标强制原色，确保可见
-        if (icon && cell.imageView) {
-            cell.imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-            cell.imageView.contentMode = UIViewContentModeScaleAspectFit;
-        }
-        
-        return cell;
-    }
-    return %orig;
-}
-
+// 处理点击事件（拦截我们自己添加的项）
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
-    NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
+    // 获取总菜单项数（原生+我们的2个）
+    NSInteger totalItems = [collectionView numberOfItemsInSection:0];
+    NSInteger originalCount = totalItems - 2; // 原生菜单项数
     if (indexPath.item >= originalCount) {
+        // 点击的是我们添加的项
         if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
-            if (indexPath.item == originalCount) doDownloadVoiceFromMenu(self);
-            else doVoiceSettings(self);
+            if (indexPath.item == originalCount) {
+                doDownloadVoiceFromMenu(self);
+            } else {
+                doVoiceSettings(self);
+            }
         } else {
             [AWECAUtils showToast:@"仅语音消息支持"];
         }
         return;
     }
+    // 原生菜单项，调用原方法
     %orig;
 }
 
+%end
+
+// ========== 强制图标显示（hook 单元格配置） ==========
+%hook AWEIMEmojiReplyMenuViewCell
+- (void)configWithMenuItem:(id)menuItem {
+    %orig; // 先调用原生配置（设置标题等）
+    // 如果是我们的自定义菜单项（有关联对象），强制设置图标
+    NSString *iconName = objc_getAssociatedObject(menuItem, kCustomMenuItemKey);
+    if (iconName) {
+        UIImage *icon = [UIImage systemImageNamed:iconName];
+        if (icon && self.imageView) {
+            self.imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+            self.imageView.contentMode = UIViewContentModeScaleAspectFit;
+        }
+    }
+}
 %end
 
 // ========== 下载和设置实现 ==========
