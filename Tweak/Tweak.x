@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 最终原生模型版（修复长按菜单不显示 & 无图标问题）
+// AWECommentAudioTweak - 完整版（含调试代码，可自动定位菜单类名）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -12,7 +12,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
-// 私信/群聊相关类声明
+// ---------- 私信/群聊相关类声明 ----------
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
 @end
@@ -22,24 +22,22 @@
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
 
-// ---- 正确的长按菜单视图类（请根据实际情况修改） ----
-// 尝试用 AWEIMMessageLongPressMenuView，若还不行请用 FLEX 查看替换
+// 🔧 占位菜单类 – 运行后根据日志替换此类名
 @interface AWEIMMessageLongPressMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
 @property (nonatomic, strong) UICollectionView *collectionView;
 @end
-
-// 菜单 cell 的前向声明
 @interface AWEIMMessageLongPressMenuViewCell : UICollectionViewCell
 - (void)configWithMenuItem:(id)menuItem;
 @end
 
 @interface AWEIMMessageListViewController : UIViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
+- (void)awe_scanCollectionViews:(UIView *)view depth:(int)depth; // 调试用
 @end
 @interface AFDHoverableContainerView : UIView
 @end
 
-// 前置声明
+// ---------- 前置声明 ----------
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
@@ -133,21 +131,14 @@ static id createMenuItem(NSString *title, NSString *iconSystemName) {
     [item setValue:title forKey:@"title"];
     UIImage *icon = [UIImage systemImageNamed:iconSystemName];
     if (icon) {
-        // 尝试多个可能的属性名（常见的如 icon / iconImage / image）
-        @try {
-            [item setValue:icon forKey:@"icon"];
-        } @catch (NSException *e) {}
-        @try {
-            [item setValue:icon forKey:@"iconImage"];
-        } @catch (NSException *e) {}
-        @try {
-            [item setValue:icon forKey:@"image"];
-        } @catch (NSException *e) {}
+        @try { [item setValue:icon forKey:@"icon"]; } @catch (NSException *e) {}
+        @try { [item setValue:icon forKey:@"iconImage"]; } @catch (NSException *e) {}
+        @try { [item setValue:icon forKey:@"image"]; } @catch (NSException *e) {}
     }
     return item;
 }
 
-// ========== 评论区功能（保持不变） ==========
+// ========== 评论区功能 ==========
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
@@ -457,28 +448,44 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 长按菜单回调 ==========
+// ========== 长按消息记录（含调试扫描） ==========
 %hook AWEIMMessageListViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
     g_lastLongPressedMessage = message;
-    NSLog(@"[AWECommentAudioTweak] 长按消息已记录：%@", [message class]);
+    NSLog(@"[AWE] 长按消息已记录：%@", [message class]);
+
+    // 0.5 秒后扫描窗口内所有 UICollectionView，定位菜单视图类
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIWindow *window = [UIApplication sharedApplication].keyWindow;
+        [self awe_scanCollectionViews:window depth:0];
+    });
+}
+
+- (void)awe_scanCollectionViews:(UIView *)view depth:(int)depth {
+    if ([view isKindOfClass:[UICollectionView class]]) {
+        UICollectionView *cv = (UICollectionView *)view;
+        NSLog(@"🎯 找到菜单 CollectionView: %p\n  superview: %@ (%@)\n  delegate: %@\n  dataSource: %@\n  items: %ld",
+              cv, cv.superview, NSStringFromClass([cv.superview class]),
+              cv.delegate, cv.dataSource,
+              (long)[cv numberOfItemsInSection:0]);
+    }
+    for (UIView *sub in view.subviews) {
+        [self awe_scanCollectionViews:sub depth:depth+1];
+    }
 }
 %end
 
-// ========== 核心：Hook 正确的长按菜单视图（已替换为 AWEIMMessageLongPressMenuView） ==========
+// ========== 核心：Hook 菜单视图（需替换为调试得到的类名） ==========
 %hook AWEIMMessageLongPressMenuView
 
 - (void)layoutSubviews {
     %orig;
-
     if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
-        // 强制刷新 collectionView 以加载新菜单项
         for (UIView *sub in self.subviews) {
             if ([sub isKindOfClass:[UICollectionView class]]) {
                 UICollectionView *cv = (UICollectionView *)sub;
                 [cv reloadData];
-                // 动态调整高度
                 CGFloat contentH = cv.contentSize.height;
                 if (contentH > cv.frame.size.height) {
                     CGRect frame = cv.frame;
@@ -507,7 +514,6 @@ static void setupStackViewLayoutHook(void) {
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
     if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
-        NSLog(@"[AWECommentAudioTweak] 增加菜单项：原数量 %ld，+2", (long)originalCount);
         return originalCount + 2;
     }
     return originalCount;
@@ -516,27 +522,23 @@ static void setupStackViewLayoutHook(void) {
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
-        // 获取菜单 cell，类名需根据实际情况调整（可通过 reuseIdentifier 自动获取）
         static NSString *cellReuseID = nil;
         if (!cellReuseID) {
-            // 尝试从第一个原始 cell 获取 reuseIdentifier
             if (originalCount > 0) {
                 UICollectionViewCell *firstCell = [collectionView cellForItemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
                 cellReuseID = firstCell.reuseIdentifier;
             }
             if (!cellReuseID) {
-                cellReuseID = @"AWEIMMessageLongPressMenuViewCell"; // 常见命名，按需修改
+                cellReuseID = @"AWEIMMessageLongPressMenuViewCell"; // 兜底
             }
         }
         id cell = [collectionView dequeueReusableCellWithReuseIdentifier:cellReuseID forIndexPath:indexPath];
-        
         id menuItem = nil;
         if (indexPath.item == originalCount) {
             menuItem = createMenuItem(@"下载", @"arrow.down.circle");
         } else {
             menuItem = createMenuItem(@"设置", @"gearshape");
         }
-        
         if ([cell respondsToSelector:@selector(configWithMenuItem:)]) {
             [cell configWithMenuItem:menuItem];
         }
@@ -554,7 +556,6 @@ static void setupStackViewLayoutHook(void) {
         } else {
             [AWECAUtils showToast:@"仅语音消息支持"];
         }
-        // 关闭菜单（可尝试 dismiss）
         return;
     }
     %orig;
