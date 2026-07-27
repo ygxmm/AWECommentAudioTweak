@@ -457,20 +457,27 @@ static void setupStackViewLayoutHook(void) {
     NSLog(@"[AWE] 长按消息已记录：%@", [message class]);
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self awe_dumpAllWindows];
+        // 直接在 block 内遍历窗口，无需额外注入方法
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        NSArray *allWindows = [UIApplication sharedApplication].windows;
+#pragma clang diagnostic pop
+        for (UIWindow *window in allWindows) {
+            NSLog(@"=== 窗口: %@ (hidden=%d) ===", window, window.hidden);
+            [self awe_dumpViewInline:window depth:0 maxDepth:3];
+        }
     });
 }
 
-- (void)awe_dumpAllWindows {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    NSArray *allWindows = [UIApplication sharedApplication].windows;
-#pragma clang diagnostic pop
-    for (UIWindow *window in allWindows) {
-        NSLog(@"=== 窗口: %@ (hidden=%d) ===", window, window.hidden);
-        [self awe_dumpView:window depth:0 maxDepth:3];
+// 内联的辅助递归方法（可直接调用）
+- (void)awe_dumpViewInline:(UIView *)view depth:(int)depth maxDepth:(int)maxDepth {
+    if (depth > maxDepth) return;
+    NSLog(@"%*s%@", depth * 2, "", NSStringFromClass([view class]));
+    for (UIView *sub in view.subviews) {
+        [self awe_dumpViewInline:sub depth:depth+1 maxDepth:maxDepth];
     }
 }
+%end
 
 - (void)awe_dumpView:(UIView *)view depth:(int)depth maxDepth:(int)maxDepth {
     if (depth > maxDepth) return;
