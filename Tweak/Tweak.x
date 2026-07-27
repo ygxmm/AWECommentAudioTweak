@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 最终完整版（图标+文字，编译安全）
+// AWECommentAudioTweak - 最终稳定版（动态布局 + 图标必显）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -22,12 +22,12 @@
 @interface AWEIMFormatAudioRecordController : NSObject
 @end
 
-// 菜单视图 (已通过头文件确认)
+// 菜单视图
 @interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDelegate, UICollectionViewDataSource>
 @property (nonatomic, strong) UICollectionView *menuItemsCollectionView;
 @end
 
-// 菜单单元格 (已通过头文件确认)
+// 菜单单元格
 @interface AWEIMEmojiReplyMenuViewCell : UICollectionViewCell
 - (void)configWithMenuItem:(id)menuItem;
 @property (nonatomic, strong) UIImageView *imageView;
@@ -452,34 +452,41 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 菜单项注入（图标必显） ==========
+// ========== 菜单项注入（动态布局 + 图标必显） ==========
 %hook AWEIMEmojiReplyMenuView
 
 - (void)layoutSubviews {
     %orig;
-    if (g_lastLongPressedMessage) {
-        UICollectionView *cv = [self valueForKey:@"menuItemsCollectionView"];
-        if (cv) {
-            [cv reloadData];
-            CGFloat contentH = cv.contentSize.height;
-            if (contentH > cv.frame.size.height) {
-                CGRect frame = cv.frame;
-                frame.size.height = contentH;
-                cv.frame = frame;
-            }
-            cv.scrollEnabled = NO;
-            cv.clipsToBounds = NO;
-
-            UIView *parent = self.superview;
-            if ([parent isKindOfClass:NSClassFromString(@"AFDHoverableContainerView")]) {
-                CGRect parentFrame = parent.frame;
-                CGFloat neededHeight = CGRectGetMaxY(cv.frame) + 8;
-                if (neededHeight > parentFrame.size.height) {
-                    parentFrame.size.height = neededHeight;
-                    parent.frame = parentFrame;
-                    parent.clipsToBounds = NO;
-                }
-            }
+    if (!g_lastLongPressedMessage) return;
+    
+    UICollectionView *cv = [self valueForKey:@"menuItemsCollectionView"];
+    if (!cv) return;
+    
+    // 强制刷新布局
+    [cv.collectionViewLayout invalidateLayout];
+    [cv reloadData];
+    [cv layoutIfNeeded];
+    
+    // 根据内容自动调整高度
+    CGFloat newHeight = cv.collectionViewLayout.collectionViewContentSize.height;
+    if (newHeight > 0) {
+        CGRect cvFrame = cv.frame;
+        cvFrame.size.height = newHeight;
+        cv.frame = cvFrame;
+    }
+    
+    cv.scrollEnabled = NO;
+    cv.clipsToBounds = NO;
+    
+    // 调整父容器
+    UIView *parent = self.superview;
+    if ([parent isKindOfClass:NSClassFromString(@"AFDHoverableContainerView")]) {
+        CGRect parentFrame = parent.frame;
+        CGFloat neededHeight = CGRectGetMaxY(cv.frame) + 8;
+        if (fabs(neededHeight - parentFrame.size.height) > 0.5) {
+            parentFrame.size.height = neededHeight;
+            parent.frame = parentFrame;
+            parent.clipsToBounds = NO;
         }
     }
 }
@@ -509,11 +516,10 @@ static void setupStackViewLayoutHook(void) {
         
         [cell configWithMenuItem:menuItem];
         
-        // 直接设置图标并配置显示模式
+        // 图标强制原色，确保可见
         if (icon && cell.imageView) {
-            cell.imageView.image = icon;
+            cell.imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
             cell.imageView.contentMode = UIViewContentModeScaleAspectFit;
-            cell.imageView.tintColor = nil; // 避免被系统着色覆盖
         }
         
         return cell;
