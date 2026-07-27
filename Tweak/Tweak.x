@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 最终编译通过版（Hook setMenuItemList，完美融合）
+// Tweak.x - 评论区、AI 按钮、布局优化
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -7,66 +7,17 @@
 #import "AWECAAudioReplacer.h"
 #import "AWECAAudioPickerController.h"
 #import "AWECATTSController.h"
+#import "AWECAPrivateChat.h"   // 仅用于 realAudioDuration()
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
-// ========== 私有类声明 ==========
-@interface AWEIMAudioRecordController : NSObject
-@property (nonatomic, copy) NSString *recordFilePath;
-@end
-@interface AWEIMAudioEnginRecorder : NSObject
-- (void)setCurrentTime:(double)currentTime;
-@end
-@interface AWEIMFormatAudioRecordController : NSObject
-@end
-
-// 菜单视图
-@interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDelegate, UICollectionViewDataSource>
-@property (nonatomic, strong) NSArray *menuItemList;
-@property (nonatomic, strong) UICollectionView *menuItemsCollectionView;
-@end
-
-// 菜单单元格
-@interface AWEIMEmojiReplyMenuViewCell : UICollectionViewCell
-- (void)configWithMenuItem:(id)menuItem;
-@property (nonatomic, strong) UIImageView *imageView;
-@property (nonatomic, strong) UILabel *textLabel;
-@end
-
-@interface AWEIMMessageListViewController : UIViewController
-- (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
-@end
-@interface AFDHoverableContainerView : UIView
-@end
-
-// ========== 前置声明 ==========
+// ---------- 前置声明（本模块专用）----------
 static void setupAudioIconElementHook(void);
 static void setupAudioInputElementHook(void);
 static void setupStackViewLayoutHook(void);
 static UIView *findMorePanelElementView(UIView *stackView);
-static double realAudioDuration(NSString *filePath);
-static void showSaveDialogForURL(NSString *urlString, NSString *msgID);
-static void downloadFromURL(NSString *urlStr, NSString *savePath);
-static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc);
-static void doDownloadVoiceFromMenu(id menuView);
-static void doVoiceSettings(id menuView);
-static id getMessageFromMenuView(UIView *menuView);
-static NSString *extractAudioURLFromMessage(id message);
-static id extractMessageFromCell(UIView *cell);
-
-static id g_lastLongPressedMessage = nil;
-static const void *kCustomMenuItemKey = &kCustomMenuItemKey;
-
-// 获取真实音频时长
-static double realAudioDuration(NSString *filePath) {
-    NSURL *url = [NSURL fileURLWithPath:filePath];
-    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
-    CMTime time = asset.duration;
-    if (CMTIME_IS_VALID(time)) return CMTimeGetSeconds(time);
-    return 0.0;
-}
 
 // 评论区：查找更多面板按钮的父容器
 static UIView *findMorePanelElementView(UIView *stackView) {
@@ -83,61 +34,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// 提取音频 CDN 链接
-static NSString *extractAudioURLFromMessage(id message) {
-    if (!message) return nil;
-    id content = [message valueForKey:@"content"];
-    if (!content) return nil;
-    id resourceUrl = [content valueForKey:@"resourceUrl"];
-    if (!resourceUrl) return nil;
-    NSArray *originList = [resourceUrl valueForKey:@"originURLList"];
-    if (originList && originList.count > 0) return originList.firstObject;
-    return [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
-}
-
-// 从 Cell 提取消息对象
-static id extractMessageFromCell(UIView *cell) {
-    if (!cell) return nil;
-    id msg = [cell valueForKey:@"message"];
-    if (msg && [msg isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return msg;
-    NSArray *keys = @[@"item", @"model", @"data", @"audioMessage"];
-    for (NSString *key in keys) {
-        msg = [cell valueForKey:key];
-        if ([msg isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return msg;
-    }
-    id context = [cell valueForKey:@"currentContext"];
-    if (context) {
-        msg = [context valueForKey:@"message"];
-        if ([msg isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return msg;
-    }
-    return nil;
-}
-
-// 从菜单视图查找消息
-static id getMessageFromMenuView(UIView *menuView) {
-    UIView *current = menuView;
-    while (current) {
-        if ([current isKindOfClass:[UITableViewCell class]] || [current isKindOfClass:[UICollectionViewCell class]]) {
-            id msg = extractMessageFromCell(current);
-            if (msg) return msg;
-            break;
-        }
-        current = current.superview;
-    }
-    return nil;
-}
-
-// 创建自定义菜单项（标题 + 图标名标记）
-static id createMenuItem(NSString *title, NSString *iconSystemName) {
-    Class modelClass = NSClassFromString(@"AWEIMCustomMenuModel");
-    if (!modelClass) return nil;
-    id item = [[modelClass alloc] init];
-    [item setValue:title forKey:@"title"];
-    objc_setAssociatedObject(item, kCustomMenuItemKey, iconSystemName, OBJC_ASSOCIATION_COPY_NONATOMIC);
-    return item;
-}
-
-// ========== 评论区功能 ==========
+// ========== 评论区语音录制替换 ==========
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
@@ -206,7 +103,7 @@ static void hook_generateAudioPreviewBubble(id self, SEL _cmd, id recordedModel)
         NSString *audioPath = [recordedModel valueForKey:@"audioFilePath"];
         if (audioPath.length && [[NSFileManager defaultManager] fileExistsAtPath:audioPath]) {
             if ([[AWECAAudioReplacer shared] replaceAudioAtPath:audioPath]) {
-                double dur = realAudioDuration(audioPath);
+                double dur = realAudioDuration(audioPath);  // 来自私信模块
                 [recordedModel setValue:@((long long)(dur * 1000)) forKey:@"duration"];
             }
         }
@@ -224,7 +121,7 @@ static void setupAudioInputElementHook(void) {
     }
 }
 
-// ========== AI 按钮布局更新（保持不变） ==========
+// ========== AI 按钮布局更新 ==========
 static void aweca_updateAIButtonPosition(UIView *stackView) {
     UIView *aiContainer = [stackView viewWithTag:19528];
     if (!aiContainer) return;
@@ -369,232 +266,6 @@ static void setupStackViewLayoutHook(void) {
         orig_stackViewLayoutSubviews = (void (*)(id, SEL))method_getImplementation(m);
         method_setImplementation(m, (IMP)hook_stackViewLayoutSubviews);
     }
-}
-
-// ========== 私信语音时长修正 ==========
-%hook AWEIMAudioRecordController
-- (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
-    if (success && [AWECAAudioReplacer shared].enabled) {
-        NSString *filePath = self.recordFilePath;
-        if (filePath.length && [[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
-            [[AWECAAudioReplacer shared] replaceAudioAtPath:filePath];
-            double realSec = realAudioDuration(filePath);
-            if (realSec > 0) {
-                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
-                id engineRecorder = [recorder valueForKey:@"recorder"];
-                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
-                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
-                }
-            }
-            [AWECAUtils showToast:@"私信语音已替换"];
-        }
-    }
-    %orig;
-}
-- (BOOL)sendRecordMessageIfNeededWithFilePath:(id)filePath audioRecorder:(id)recorder {
-    if ([AWECAAudioReplacer shared].enabled && filePath) {
-        NSString *path = (NSString *)filePath;
-        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
-            double realSec = realAudioDuration(path);
-            if (realSec > 0) {
-                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
-                id engineRecorder = [recorder valueForKey:@"recorder"];
-                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
-                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
-                }
-            }
-        }
-    }
-    return %orig;
-}
-%end
-
-%hook AWEIMFormatAudioRecordController
-- (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success action:(unsigned long long)action error:(id)error {
-    if (success && [AWECAAudioReplacer shared].enabled) {
-        NSString *path = [[recorder valueForKey:@"url"] path];
-        if (path.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
-            double realSec = realAudioDuration(path);
-            if (realSec > 0) {
-                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
-                id engineRecorder = [recorder valueForKey:@"recorder"];
-                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
-                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
-                }
-            }
-            [AWECAUtils showToast:@"格式语音已替换"];
-        }
-    }
-    %orig;
-}
-- (BOOL)sendRecordMessageIfNeededWithData:(id)data audioRecorder:(id)recorder {
-    if ([AWECAAudioReplacer shared].enabled && [recorder respondsToSelector:@selector(url)]) {
-        NSString *path = [[recorder valueForKey:@"url"] path];
-        if (path.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            [[AWECAAudioReplacer shared] replaceAudioAtPath:path];
-            double realSec = realAudioDuration(path);
-            if (realSec > 0) {
-                @try { [recorder setValue:@(realSec) forKey:@"currentTime"]; } @catch (NSException *e) {}
-                id engineRecorder = [recorder valueForKey:@"recorder"];
-                if (engineRecorder && [engineRecorder isKindOfClass:NSClassFromString(@"AWEIMAudioEnginRecorder")]) {
-                    [(AWEIMAudioEnginRecorder *)engineRecorder setCurrentTime:realSec];
-                }
-            }
-        }
-    }
-    return %orig;
-}
-%end
-
-// ========== 长按消息记录 ==========
-%hook AWEIMMessageListViewController
-- (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
-    %orig;
-    g_lastLongPressedMessage = message;
-}
-%end
-
-// ========== 核心：Hook setMenuItemList，追加自定义菜单项 ==========
-%hook AWEIMEmojiReplyMenuView
-
-- (void)setMenuItemList:(NSArray *)menuItemList {
-    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
-        NSMutableArray *newList = [menuItemList mutableCopy] ?: [NSMutableArray array];
-        id downloadItem = createMenuItem(@"下载", @"arrow.down.circle");
-        id settingsItem = createMenuItem(@"设置", @"gearshape");
-        [newList addObject:downloadItem];
-        [newList addObject:settingsItem];
-        %orig(newList);
-    } else {
-        %orig;
-    }
-}
-
-// 拦截点击事件（自定义项的处理）
-- (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
-    NSArray *items = self.menuItemList;
-    NSInteger total = items.count;
-    NSInteger originalCount = total - 2;
-    if (indexPath.item >= originalCount) {
-        if (indexPath.item == originalCount) doDownloadVoiceFromMenu(self);
-        else if (indexPath.item == originalCount + 1) doVoiceSettings(self);
-        return;
-    }
-    %orig;
-}
-%end
-
-// ========== 强制图标显示 ==========
-%hook AWEIMEmojiReplyMenuViewCell
-- (void)configWithMenuItem:(id)menuItem {
-    %orig;
-    NSString *iconName = objc_getAssociatedObject(menuItem, kCustomMenuItemKey);
-    if (iconName) {
-        UIImage *icon = [UIImage systemImageNamed:iconName];
-        if (icon && self.imageView) {
-            self.imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-            self.imageView.contentMode = UIViewContentModeScaleAspectFit;
-        }
-    }
-}
-%end
-
-// ========== 下载和设置实现 ==========
-static void doDownloadVoiceFromMenu(id menuView) {
-    id message = g_lastLongPressedMessage;
-    if (!message) message = getMessageFromMenuView((UIView *)menuView);
-    if (!message) { [AWECAUtils showToast:@"无法获取消息对象"]; return; }
-    NSString *audioURL = extractAudioURLFromMessage(message);
-    if (!audioURL.length) { [AWECAUtils showToast:@"无法获取音频链接"]; return; }
-    NSString *msgID = [message valueForKey:@"messageID"];
-    showSaveDialogForURL(audioURL, msgID);
-}
-
-static void doVoiceSettings(id menuView) {
-    [[AWECAAudioPickerController shared] showPickerFromViewController:[AWECAUtils topViewController]];
-}
-
-static void showSaveDialogForURL(NSString *urlString, NSString *msgID) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *topVC = [AWECAUtils topViewController];
-        if (!topVC) return;
-        NSString *defaultName = [NSString stringWithFormat:@"语音_%@", msgID ?: @((int)[[NSDate date] timeIntervalSince1970])];
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存语音" message:nil preferredStyle:UIAlertControllerStyleAlert];
-        [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-            tf.text = defaultName; tf.placeholder = @"文件名(不含扩展名)"; tf.clearButtonMode = UITextFieldViewModeWhileEditing;
-        }];
-        [alert addAction:[UIAlertAction actionWithTitle:@"保存到默认目录" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            NSString *fileName = alert.textFields.firstObject.text ?: defaultName;
-            downloadFromURL(urlString, [[AWECAUtils audioSavePath] stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
-        }]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"选择文件夹" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            NSString *fileName = alert.textFields.firstObject.text ?: defaultName;
-            showFolderPicker(fileName, urlString, topVC);
-        }]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-        [topVC presentViewController:alert animated:YES completion:nil];
-    });
-}
-
-static void downloadFromURL(NSString *urlStr, NSString *savePath) {
-    [AWECAUtils showToast:@"正在下载..."];
-    NSURL *url = [NSURL URLWithString:urlStr];
-    if (!url) { [AWECAUtils showToast:@"URL 无效"]; return; }
-    NSURLSession *session = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
-    [[session downloadTaskWithURL:url completionHandler:^(NSURL *tmpFile, NSURLResponse *response, NSError *error) {
-        if (error || !tmpFile) { dispatch_async(dispatch_get_main_queue(), ^{ [AWECAUtils showToast:@"下载失败"]; }); return; }
-        NSFileManager *fm = [NSFileManager defaultManager];
-        NSString *dir = [savePath stringByDeletingLastPathComponent];
-        [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-        [fm removeItemAtPath:savePath error:nil];
-        BOOL ok = [fm moveItemAtURL:tmpFile toURL:[NSURL fileURLWithPath:savePath] error:nil];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [AWECAUtils showToast: ok ? [NSString stringWithFormat:@"已保存 %@", savePath.lastPathComponent] : @"保存失败"];
-        });
-    }] resume];
-}
-
-static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewController *vc) {
-    NSString *baseDir = [AWECAUtils audioSavePath];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *contents = [fm contentsOfDirectoryAtPath:baseDir error:nil];
-    NSMutableArray *folders = [NSMutableArray array];
-    for (NSString *item in contents) {
-        BOOL isDir = NO;
-        NSString *fullPath = [baseDir stringByAppendingPathComponent:item];
-        if ([fm fileExistsAtPath:fullPath isDirectory:&isDir] && isDir) [folders addObject:item];
-    }
-    UIAlertController *picker = [UIAlertController alertControllerWithTitle:@"选择保存位置" message:baseDir preferredStyle:UIAlertControllerStyleActionSheet];
-    [picker addAction:[UIAlertAction actionWithTitle:@"默认目录" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        downloadFromURL(cdnURL, [baseDir stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
-    }]];
-    for (NSString *folder in folders) {
-        [picker addAction:[UIAlertAction actionWithTitle:folder style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            NSString *dir = [baseDir stringByAppendingPathComponent:folder];
-            downloadFromURL(cdnURL, [dir stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
-        }]];
-    }
-    [picker addAction:[UIAlertAction actionWithTitle:@"新建文件夹" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"新建文件夹" message:nil preferredStyle:UIAlertControllerStyleAlert];
-        [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"文件夹名称"; }];
-        [alert addAction:[UIAlertAction actionWithTitle:@"创建并保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            NSString *folderName = alert.textFields.firstObject.text;
-            if (!folderName.length) { [AWECAUtils showToast:@"文件夹名不能为空"]; return; }
-            NSString *newDir = [baseDir stringByAppendingPathComponent:folderName];
-            [fm createDirectoryAtPath:newDir withIntermediateDirectories:YES attributes:nil error:nil];
-            downloadFromURL(cdnURL, [newDir stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
-        }]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-        [vc presentViewController:alert animated:YES completion:nil];
-    }]];
-    [picker addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    if (picker.popoverPresentationController) {
-        picker.popoverPresentationController.sourceView = vc.view;
-        picker.popoverPresentationController.sourceRect = CGRectMake(vc.view.bounds.size.width / 2, vc.view.bounds.size.height, 0, 0);
-    }
-    [vc presentViewController:picker animated:YES completion:nil];
 }
 
 %ctor {
