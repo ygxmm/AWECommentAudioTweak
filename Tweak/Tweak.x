@@ -494,8 +494,8 @@ static void setupStackViewLayoutHook(void) {
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
-        UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
-        // 构造菜单模型并配置
+        // 使用 id 类型避免编译时对 configWithMenuItem: 的检查
+        id cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
         id menuItem = nil;
         if (indexPath.item == originalCount) {
             menuItem = createMenuItem(@"下载", @"arrow.down.circle");
