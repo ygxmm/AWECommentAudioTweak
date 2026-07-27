@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 最终修复版（语音菜单直接显示下载/设置，无需转文字）
+// AWECommentAudioTweak - 终极强制刷新版（群聊语音直接显示下载/设置，无需转文字）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -12,7 +12,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
-// 私信类声明
+// 私信/群聊相关类声明
 @interface AWEIMAudioRecordController : NSObject
 @property (nonatomic, copy) NSString *recordFilePath;
 @end
@@ -45,7 +45,7 @@ static id getMessageFromMenuView(UIView *menuView);
 static NSString *extractAudioURLFromMessage(id message);
 static id extractMessageFromCell(UIView *cell);
 
-// 存储最近长按的消息对象
+// 全局消息对象
 static id g_lastLongPressedMessage = nil;
 
 // 获取真实音频时长
@@ -72,7 +72,7 @@ static UIView *findMorePanelElementView(UIView *stackView) {
     return nil;
 }
 
-// 从消息对象中提取音频 CDN 链接
+// 提取音频 CDN 链接
 static NSString *extractAudioURLFromMessage(id message) {
     if (!message) return nil;
     id content = [message valueForKey:@"content"];
@@ -84,7 +84,7 @@ static NSString *extractAudioURLFromMessage(id message) {
     return [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
 }
 
-// 从 Cell 中提取消息对象
+// 从 Cell 提取消息对象
 static id extractMessageFromCell(UIView *cell) {
     if (!cell) return nil;
     id msg = [cell valueForKey:@"message"];
@@ -102,7 +102,7 @@ static id extractMessageFromCell(UIView *cell) {
     return nil;
 }
 
-// 从菜单视图查找消息对象（轻量版，仅向上找 Cell）
+// 从菜单视图查找消息（轻量）
 static id getMessageFromMenuView(UIView *menuView) {
     UIView *current = menuView;
     while (current) {
@@ -116,7 +116,7 @@ static id getMessageFromMenuView(UIView *menuView) {
     return nil;
 }
 
-// ========== 评论区功能 ==========
+// ========== 评论区功能（保持不变） ==========
 %hook AWECommentAudioRecorderController
 - (void)audioRecorderDidFinishRecording:(id)recorder success:(BOOL)success error:(id)error {
     if (success && [AWECAAudioReplacer shared].enabled) {
@@ -426,7 +426,7 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 关键：长按菜单弹出时强制保存消息对象 ==========
+// ========== 长按菜单回调 ==========
 %hook AWEIMMessageListViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
@@ -434,16 +434,18 @@ static void setupStackViewLayoutHook(void) {
 }
 %end
 
-// ========== 统一菜单注入：强制追加“下载”和“设置”，并自适应高度 ==========
+// ========== 核心：强制刷新 + 自动高度 + 原生样式菜单注入 ==========
 %hook AWEIMEmojiReplyMenuView
 
 - (void)layoutSubviews {
     %orig;
 
-    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+    if (g_lastLongPressedMessage) {
         for (UIView *sub in self.subviews) {
             if ([sub isKindOfClass:[UICollectionView class]]) {
                 UICollectionView *cv = (UICollectionView *)sub;
+                // 强制刷新，让系统获取到我们追加的 Cell
+                [cv reloadData];
                 CGFloat contentH = cv.contentSize.height;
                 if (contentH > cv.frame.size.height) {
                     CGRect frame = cv.frame;
@@ -453,7 +455,6 @@ static void setupStackViewLayoutHook(void) {
                 cv.scrollEnabled = NO;
                 cv.clipsToBounds = NO;
 
-                // 如果父容器是 AFDHoverableContainerView，则增加其高度
                 UIView *parent = self.superview;
                 if ([parent isKindOfClass:NSClassFromString(@"AFDHoverableContainerView")]) {
                     CGRect parentFrame = parent.frame;
@@ -472,7 +473,6 @@ static void setupStackViewLayoutHook(void) {
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     NSInteger originalCount = %orig;
-    // 只要全局消息对象存在（长按任何消息都会设置），就追加两个菜单项
     if (g_lastLongPressedMessage) {
         return originalCount + 2;
     }
@@ -484,17 +484,14 @@ static void setupStackViewLayoutHook(void) {
     if (indexPath.item >= originalCount) {
         UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
         for (UIView *sub in cell.subviews) { [sub removeFromSuperview]; }
-        // 创建与原菜单项完全一致的样式
-        UIView *iconBg = [[UIView alloc] initWithFrame:CGRectMake(1, 4, 48, 48)];
-        iconBg.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.9];
-        iconBg.layer.cornerRadius = 10;
-        [cell addSubview:iconBg];
-        UIImageView *iconView = [[UIImageView alloc] initWithFrame:CGRectMake(12, 12, 24, 24)];
+        UIImageView *iconView = [[UIImageView alloc] initWithFrame:CGRectMake(13, 8, 24, 24)];
+        iconView.contentMode = UIViewContentModeScaleAspectFit;
         NSString *iconName = (indexPath.item == originalCount) ? @"arrow.down.circle" : @"gearshape";
         iconView.image = [[UIImage systemImageNamed:iconName] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
         iconView.tintColor = [UIColor colorWithWhite:0.8 alpha:1.0];
-        [iconBg addSubview:iconView];
-        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, 52, 50, 15)];
+        [cell addSubview:iconView];
+
+        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, 36, 50, 15)];
         label.text = (indexPath.item == originalCount) ? @"下载" : @"设置";
         label.font = [UIFont systemFontOfSize:12];
         label.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
