@@ -97,29 +97,7 @@ static id createMenuItem(NSString *title, NSString *iconSystemName) {
     return item;
 }
 
-// ---------- 下载与保存实现 ----------
-static void showSaveDialogForURL(NSString *urlString, NSString *msgID) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *topVC = [AWECAUtils topViewController];
-        if (!topVC) return;
-        NSString *defaultName = [NSString stringWithFormat:@"语音_%@", msgID ?: @((int)[[NSDate date] timeIntervalSince1970])];
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存语音" message:nil preferredStyle:UIAlertControllerStyleAlert];
-        [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-            tf.text = defaultName; tf.placeholder = @"文件名(不含扩展名)"; tf.clearButtonMode = UITextFieldViewModeWhileEditing;
-        }];
-        [alert addAction:[UIAlertAction actionWithTitle:@"保存到默认目录" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            NSString *fileName = alert.textFields.firstObject.text ?: defaultName;
-            downloadFromURL(urlString, [[AWECAUtils audioSavePath] stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
-        }]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"选择文件夹" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            NSString *fileName = alert.textFields.firstObject.text ?: defaultName;
-            showFolderPicker(fileName, urlString, topVC);
-        }]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-        [topVC presentViewController:alert animated:YES completion:nil];
-    });
-}
-
+// ---------- 下载与保存实现（先定义被调用的函数）----------
 static void downloadFromURL(NSString *urlStr, NSString *savePath) {
     [AWECAUtils showToast:@"正在下载..."];
     NSURL *url = [NSURL URLWithString:urlStr];
@@ -177,6 +155,28 @@ static void showFolderPicker(NSString *fileName, NSString *cdnURL, UIViewControl
         picker.popoverPresentationController.sourceRect = CGRectMake(vc.view.bounds.size.width / 2, vc.view.bounds.size.height, 0, 0);
     }
     [vc presentViewController:picker animated:YES completion:nil];
+}
+
+static void showSaveDialogForURL(NSString *urlString, NSString *msgID) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *topVC = [AWECAUtils topViewController];
+        if (!topVC) return;
+        NSString *defaultName = [NSString stringWithFormat:@"语音_%@", msgID ?: @((int)[[NSDate date] timeIntervalSince1970])];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"保存语音" message:nil preferredStyle:UIAlertControllerStyleAlert];
+        [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+            tf.text = defaultName; tf.placeholder = @"文件名(不含扩展名)"; tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+        }];
+        [alert addAction:[UIAlertAction actionWithTitle:@"保存到默认目录" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            NSString *fileName = alert.textFields.firstObject.text ?: defaultName;
+            downloadFromURL(urlString, [[AWECAUtils audioSavePath] stringByAppendingPathComponent:[fileName stringByAppendingPathExtension:@"m4a"]]);
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"选择文件夹" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            NSString *fileName = alert.textFields.firstObject.text ?: defaultName;
+            showFolderPicker(fileName, urlString, topVC);
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [topVC presentViewController:alert animated:YES completion:nil];
+    });
 }
 
 static void doDownloadVoiceFromMenu(id menuView) {
