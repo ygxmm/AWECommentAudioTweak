@@ -97,7 +97,7 @@ static id createMenuItem(NSString *title, NSString *iconSystemName) {
     return item;
 }
 
-// ---------- 下载与保存实现（先定义被调用的函数）----------
+// ---------- 下载与保存实现 ----------
 static void downloadFromURL(NSString *urlStr, NSString *savePath) {
     [AWECAUtils showToast:@"正在下载..."];
     NSURL *url = [NSURL URLWithString:urlStr];
@@ -303,7 +303,7 @@ static void doVoiceSettings(id menuView) {
 }
 %end
 
-// ========== 强制图标显示 ==========
+// ========== 强制图标显示（白色统一风格） ==========
 %hook AWEIMEmojiReplyMenuViewCell
 - (void)configWithMenuItem:(id)menuItem {
     %orig;
@@ -311,7 +311,9 @@ static void doVoiceSettings(id menuView) {
     if (iconName) {
         UIImage *icon = [UIImage systemImageNamed:iconName];
         if (icon && self.imageView) {
-            self.imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+            // 使用模板模式并设置白色 tintColor，与原生图标一致
+            self.imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+            self.imageView.tintColor = [UIColor whiteColor];
             self.imageView.contentMode = UIViewContentModeScaleAspectFit;
         }
     }
