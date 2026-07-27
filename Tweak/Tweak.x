@@ -1,4 +1,4 @@
-// AWECommentAudioTweak - 最终稳定版（群聊菜单加高 + 按钮正常，轻量查找）
+// AWECommentAudioTweak - 最终稳定版（动态加高容器 + 按钮正常）
 // @cookieodd | github.com/cookieodd | t.me/cookieodd
 
 #import "AWECAHeaders.h"
@@ -507,7 +507,7 @@ static void setupStackViewLayoutHook(void) {
 
 %end
 
-// ========== 群聊菜单容器：加高并添加按钮 ==========
+// ========== 群聊菜单容器：动态加高并添加按钮 ==========
 %hook AFDHoverableContainerView
 
 - (void)layoutSubviews {
@@ -524,16 +524,27 @@ static void setupStackViewLayoutHook(void) {
     }
     if (!message || ![message isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) return;
 
-    // 增加容器高度
-    CGRect f = self.frame;
-    f.size.height += 54;
-    self.frame = f;
+    // 计算内部内容的最大 Y 值
+    CGFloat contentMaxY = 0;
+    for (UIView *sub in self.subviews) {
+        if (sub.tag >= 30001) continue;
+        CGFloat subMaxY = CGRectGetMaxY(sub.frame);
+        if (subMaxY > contentMaxY) contentMaxY = subMaxY;
+    }
+
+    // 需要的高度：内容底部 + 54 点（按钮区域）
+    CGFloat neededHeight = contentMaxY + 54;
+    if (neededHeight > self.frame.size.height) {
+        CGRect f = self.frame;
+        f.size.height = neededHeight;
+        self.frame = f;
+        self.clipsToBounds = NO; // 防止裁剪
+    }
 
     // 在底部添加下载和设置按钮
     CGFloat centerX = self.bounds.size.width / 2;
-    CGFloat y = self.bounds.size.height - 54 + 4;
+    CGFloat y = contentMaxY + 4;
 
-    // 下载按钮
     UIView *downloadItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
     downloadItem.tag = 30001;
     downloadItem.center = CGPointMake(centerX - 40, y + 25);
@@ -551,7 +562,6 @@ static void setupStackViewLayoutHook(void) {
     [downloadItem addGestureRecognizer:tap1];
     [self addSubview:downloadItem];
 
-    // 设置按钮
     UIView *settingsItem = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 50)];
     settingsItem.tag = 30002;
     settingsItem.center = CGPointMake(centerX + 40, y + 25);
