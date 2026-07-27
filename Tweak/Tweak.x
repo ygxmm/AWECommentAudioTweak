@@ -24,6 +24,9 @@
 @interface AWEIMEmojiReplyMenuView : UIView <UICollectionViewDataSource, UICollectionViewDelegate>
 @property (nonatomic, strong) UICollectionView *collectionView;
 @end
+@interface AWEIMEmojiReplyMenuViewCell : UICollectionViewCell
+- (void)configWithMenuItem:(id)menuItem;
+@end
 @interface AWEIMMessageListViewController : UIViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message;
 @end
@@ -494,17 +497,14 @@ static void setupStackViewLayoutHook(void) {
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger originalCount = [self collectionView:collectionView numberOfItemsInSection:0] - 2;
     if (indexPath.item >= originalCount) {
-        // 使用 id 类型避免编译时对 configWithMenuItem: 的检查
-        id cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
+        AWEIMEmojiReplyMenuViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"AWEIMEmojiReplyMenuViewCell" forIndexPath:indexPath];
         id menuItem = nil;
         if (indexPath.item == originalCount) {
             menuItem = createMenuItem(@"下载", @"arrow.down.circle");
         } else {
             menuItem = createMenuItem(@"设置", @"gearshape");
         }
-        if (menuItem && [cell respondsToSelector:@selector(configWithMenuItem:)]) {
-            [cell configWithMenuItem:menuItem];
-        }
+        [cell configWithMenuItem:menuItem];
         return cell;
     }
     return %orig;
