@@ -303,9 +303,6 @@ static void doVoiceSettings(id menuView) {
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger total = self.menuItemList.count;
-    // 动态计算原生菜单项数量，因为注入后可能变化，但我们可以基于当前是否注入来推断
-    // 为了避免硬编码偏移，更稳健的方法是检查点击的 menuItem 是否为自定义项
-    // 这里保留原来基于 total - 2 的判断，前提是只有当前注入时才会执行到这里（索引已正确）
     NSInteger originalCount = total - 2;
     if (indexPath.item >= originalCount) {
         if (indexPath.item == originalCount) doDownloadVoiceFromMenu(self);
