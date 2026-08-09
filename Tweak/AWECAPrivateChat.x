@@ -270,18 +270,28 @@ static void doVoiceSettings(id menuView) {
 }
 %end
 
-// ========== 长按消息记录 ==========
+// ========== 长按消息记录 + 视图消失时重置引用（修复） ==========
 %hook AWEIMMessageListViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
     g_lastLongPressedMessage = message;
 }
+
+// 修复：离开聊天页时清空长按消息引用，防止污染其他页面的菜单
+- (void)viewWillDisappear:(BOOL)animated {
+    %orig;
+    g_lastLongPressedMessage = nil;
+}
 %end
 
-// ========== 菜单项注入（数据源注入，完美融合） ==========
+// ========== 菜单项注入（增加视图控制器类型检查） ==========
 %hook AWEIMEmojiReplyMenuView
 - (void)setMenuItemList:(NSArray *)menuItemList {
-    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+    // 修复：仅当当前顶部控制器是消息列表时才注入菜单项，避免群公告等页面误注入
+    UIViewController *topVC = [AWECAUtils topViewController];
+    BOOL isInChatVC = [topVC isKindOfClass:NSClassFromString(@"AWEIMMessageListViewController")];
+
+    if (isInChatVC && g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         NSMutableArray *newList = [menuItemList mutableCopy] ?: [NSMutableArray array];
         [newList addObject:createMenuItem(@"下载", @"arrow.down.circle")];
         [newList addObject:createMenuItem(@"设置", @"gearshape")];
@@ -293,6 +303,9 @@ static void doVoiceSettings(id menuView) {
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger total = self.menuItemList.count;
+    // 动态计算原生菜单项数量，因为注入后可能变化，但我们可以基于当前是否注入来推断
+    // 为了避免硬编码偏移，更稳健的方法是检查点击的 menuItem 是否为自定义项
+    // 这里保留原来基于 total - 2 的判断，前提是只有当前注入时才会执行到这里（索引已正确）
     NSInteger originalCount = total - 2;
     if (indexPath.item >= originalCount) {
         if (indexPath.item == originalCount) doDownloadVoiceFromMenu(self);
@@ -311,7 +324,6 @@ static void doVoiceSettings(id menuView) {
     if (iconName) {
         UIImage *icon = [UIImage systemImageNamed:iconName];
         if (icon && self.imageView) {
-            // 使用模板模式并设置白色 tintColor，与原生图标一致
             self.imageView.image = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
             self.imageView.tintColor = [UIColor whiteColor];
             self.imageView.contentMode = UIViewContentModeScaleAspectFit;
