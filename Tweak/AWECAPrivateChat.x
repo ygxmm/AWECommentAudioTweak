@@ -270,28 +270,26 @@ static void doVoiceSettings(id menuView) {
 }
 %end
 
-// ========== 长按消息记录 + 视图消失时重置引用（修复） ==========
+// ========== 长按消息记录 + 视图消失时重置引用 ==========
 %hook AWEIMMessageListViewController
 - (void)msg_longPressMenuWillDisplayOnMessage:(id)message {
     %orig;
     g_lastLongPressedMessage = message;
 }
 
-// 修复：离开聊天页时清空长按消息引用，防止污染其他页面的菜单
+// 修复：离开聊天界面时清空引用，避免污染群公告等其它页面的菜单
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     g_lastLongPressedMessage = nil;
 }
 %end
 
-// ========== 菜单项注入（增加视图控制器类型检查） ==========
+// ========== 菜单项注入（仅依赖消息引用，不再检查顶层控制器） ==========
 %hook AWEIMEmojiReplyMenuView
 - (void)setMenuItemList:(NSArray *)menuItemList {
-    // 修复：仅当当前顶部控制器是消息列表时才注入菜单项，避免群公告等页面误注入
-    UIViewController *topVC = [AWECAUtils topViewController];
-    BOOL isInChatVC = [topVC isKindOfClass:NSClassFromString(@"AWEIMMessageListViewController")];
-
-    if (isInChatVC && g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
+    // 只要 g_lastLongPressedMessage 有效且为音频消息，就注入自定义菜单
+    // 因为 viewWillDisappear: 会负责在离开聊天页时清空它，所以这里不需要额外的控制器检查
+    if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
         NSMutableArray *newList = [menuItemList mutableCopy] ?: [NSMutableArray array];
         [newList addObject:createMenuItem(@"下载", @"arrow.down.circle")];
         [newList addObject:createMenuItem(@"设置", @"gearshape")];
