@@ -43,7 +43,6 @@ double realAudioDuration(NSString *filePath) {
     return 0.0;
 }
 
-// 提取音频 CDN 链接
 static NSString *extractAudioURLFromMessage(id message) {
     if (!message) return nil;
     id content = [message valueForKey:@"content"];
@@ -55,7 +54,6 @@ static NSString *extractAudioURLFromMessage(id message) {
     return [resourceUrl valueForKey:@"url"] ?: [resourceUrl valueForKey:@"urlString"];
 }
 
-// 从 Cell 提取消息对象
 static id extractMessageFromCell(UIView *cell) {
     if (!cell) return nil;
     id msg = [cell valueForKey:@"message"];
@@ -73,7 +71,6 @@ static id extractMessageFromCell(UIView *cell) {
     return nil;
 }
 
-// 从菜单视图查找消息
 static id getMessageFromMenuView(UIView *menuView) {
     UIView *current = menuView;
     while (current) {
@@ -87,7 +84,6 @@ static id getMessageFromMenuView(UIView *menuView) {
     return nil;
 }
 
-// 创建带图标标记的菜单项
 static id createMenuItem(NSString *title, NSString *iconSystemName) {
     Class modelClass = NSClassFromString(@"AWEIMCustomMenuModel");
     if (!modelClass) return nil;
@@ -97,12 +93,10 @@ static id createMenuItem(NSString *title, NSString *iconSystemName) {
     return item;
 }
 
-// 判断一个菜单项是否为我们注入的自定义项
 static BOOL isCustomMenuItem(id menuItem) {
     return objc_getAssociatedObject(menuItem, kCustomMenuItemKey) != nil;
 }
 
-// 净化数组：移除所有自定义菜单项
 static NSArray *cleanMenuItems(NSArray *items) {
     if (!items) return nil;
     NSMutableArray *cleaned = [NSMutableArray array];
@@ -114,7 +108,6 @@ static NSArray *cleanMenuItems(NSArray *items) {
     return [cleaned copy];
 }
 
-// 净化并注入：先移除所有自定义项，再根据条件决定是否添加新项
 static NSArray *processedMenuItems(NSArray *originalItems) {
     NSMutableArray *list = [[cleanMenuItems(originalItems) mutableCopy] ?: [NSMutableArray array] mutableCopy];
     if (g_lastLongPressedMessage && [g_lastLongPressedMessage isKindOfClass:NSClassFromString(@"AWEIMAudioMessage")]) {
@@ -310,90 +303,26 @@ static void doVoiceSettings(id menuView) {
 }
 %end
 
-// ========== 菜单项注入（净化 + 注入 + 主动清理） ==========
+// ========== 菜单项注入（净化 + 主动清理） ==========
 %hook AWEIMEmojiReplyMenuView
 
-// 重写 setter，先净化再根据情况注入
 - (void)setMenuItemList:(NSArray *)menuItemList {
     NSArray *finalList = processedMenuItems(menuItemList);
     %orig(finalList);
 }
 
-// 菜单即将显示时再次检查净化，防止复用残留
 - (void)didMoveToWindow {
     %orig;
     if (self.window) {
         NSArray *current = self.menuItemList;
-        if (current) {
-            // 计算净化后的列表（不加注入条件，因为此时可能已离开聊天页）
-            // 这里需要判断是否应该保留自定义项：和 setter 中逻辑一致
-            NSArray *correct = processedMenuItems(current);
-            if (![correct isEqualToArray:current]) {
-                // 列表不同，需要更新，但直接调用自己的 setter 可能会递归
-                // 所以用原始实现来设置（通过消息转发调用父类或原 setter）
-                // 但我们 hook 了 setter，这里直接调用 %orig 会形成新的递归吗？
-                // 因为 didMoveToWindow 中调用 %orig 不会，但 %orig 在 hook 上下文中指代原始实现。
-                // 我们在 setMenuItemList 的 %orig 是原始方法，所以可以使用 %orig(correct) 但这里没有 %orig 可调用原始 setter，
-                // 简单方式：使用 objc_msgSend 直接调用原始 setMenuItemList 的实现，避免 hook 干扰。
-                // 已知原始 setter 可以通过 %orig 获取，但出于安全考虑，直接设置实例变量：
-                // 但不推荐，因为可能有 KVO。直接调用 [super setMenuItemList:correct] 也不行。
-                // 我们换个思路：在 didMoveToWindow 中，如果发现需要净化，就调用我们自己的 setMenuItemList:，
-                // 但我们的 setMenuItemList 内部会调用 processedMenuItems，如果这次调用后结果相同，则不会再变化，
-                // 避免死循环：我们可以加个标志位防止重入。
-            }
-        }
-    }
-}
-
-%end
-
-// 由于 didMoveToWindow 中的实现比较复杂，我们采用更简洁可靠的方法：
-// 覆盖 didMoveToWindow 时，主动用净化后的列表刷新菜单，直接操作底层存储。
-// 简化后重新实现：
-%hook AWEIMEmojiReplyMenuView
-
-- (void)didMoveToWindow {
-    %orig;
-    if (self.window) {
-        NSArray *list = self.menuItemList;
-        NSArray *clean = processedMenuItems(list);
-        if (![clean isEqualToArray:list]) {
-            // 直接设置属性，避免触发 hook 递归（这里调用自己的 setter 会再次净化，但结果不变，最多两次）
-            // 但还是设置实例变量最稳妥，假设底层 ivar 名是 _menuItemList
-            [self setValue:clean forKey:@"menuItemList"];
-        }
-    }
-}
-
-%end
-
-// 注意：上面 %hook AWEIMEmojiReplyMenuView 写了两次，会有冲突。应该合并成一个 %hook 块。
-// 修正：将两个 hook 合并，同时包含 setMenuItemList 和 didMoveToWindow。
-
-// 最终修正：
-%hook AWEIMEmojiReplyMenuView
-
-- (void)setMenuItemList:(NSArray *)menuItemList {
-    NSArray *finalList = processedMenuItems(menuItemList);
-    %orig(finalList);
-}
-
-- (void)didMoveToWindow {
-    %orig;
-    if (self.window) {
-        NSArray *list = self.menuItemList;
-        NSArray *clean = processedMenuItems(list);
-        if (![clean isEqualToArray:list]) {
-            // 通过 KVC 设置，避免再次触发 setter hook（但 KVC 也会触发 setter，不过我们的 setter 会再次净化，结果相同，不会死循环，最多一次额外调用）
+        NSArray *clean = processedMenuItems(current);
+        if (![clean isEqualToArray:current]) {
             [self setValue:clean forKey:@"menuItemList"];
         }
     }
 }
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
-    NSInteger total = self.menuItemList.count;
-    // 动态计算自定义项数量（可能为 0、2，也可能由于净化而变化）
-    // 判断点击项是否为自定义项：通过 associated object 检测
     if (indexPath.item < self.menuItemList.count) {
         id item = self.menuItemList[indexPath.item];
         if (isCustomMenuItem(item)) {
